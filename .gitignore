@@ -1,0 +1,9 @@
+**/.env
+**/node_modules
+**/dist
+**/build
+**/.next
+**/next-env.d.ts
+**/*.pdf
+**/venv
+**/__pycache__

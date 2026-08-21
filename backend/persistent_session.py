@@ -31,10 +31,8 @@ Usage:
 
     # --- Session 2: restore and continue ---
     rlm = RLM(..., persistent=True)
-    _ = rlm.completion(prompt=".", root_prompt="Init.")  # must init env first
-    
     session = PersistentSession(rlm)
-    session.load(user_id="user123")
+    session.load(user_id="user123")  # creates env + restores state, no API call needed
     
     # Continue without re-sending the book — context_0 is already loaded
     result = rlm.completion(prompt="", root_prompt="Count all 'e' characters.")
@@ -111,10 +109,48 @@ class PersistentSession:
         if env is None:
             raise RuntimeError(
                 "No persistent environment found. "
-                "Ensure RLM was created with persistent=True and at least "
-                "one completion() call has been made."
+                "Call session.load() or session.init_env() first to create "
+                "and populate the environment before calling completion()."
             )
         return env
+
+    def init_env(self) -> None:
+        """Create the REPL environment without making an LM API call.
+
+        RLM.__init__ does NOT create the environment — it's only created
+        inside _spawn_completion_context(), which is called by completion().
+        This means rlm._persistent_env is None until the first completion().
+
+        This method creates a LocalREPL directly using the RLM's config,
+        bypassing the need for a dummy completion() call. It:
+        1. Creates a LocalREPL with no context (empty, lightweight)
+        2. Sets it as rlm._persistent_env so completion() reuses it
+        3. Sets _skip_next_context_add so the first real completion()
+           doesn't try to add its prompt as a duplicate context
+
+        Call this BEFORE load_state() if the environment doesn't exist yet.
+        """
+        if getattr(self.rlm, "_persistent_env", None) is not None:
+            return  # already initialized
+
+        from rlm.environments import get_environment
+
+        env_kwargs = self.rlm.environment_kwargs.copy()
+        env_kwargs["depth"] = self.rlm.depth + 1
+        if self.rlm.environment_type in ("local", "ipython", "docker") and self.rlm.max_depth > 1:
+            env_kwargs["subcall_fn"] = self.rlm._subcall
+        if self.rlm.custom_tools is not None:
+            env_kwargs["custom_tools"] = self.rlm.custom_tools
+        if self.rlm.custom_sub_tools is not None:
+            env_kwargs["custom_sub_tools"] = self.rlm.custom_sub_tools
+        if self.rlm.compaction and self.rlm.environment_type in ("local", "docker"):
+            env_kwargs["compaction"] = True
+        env_kwargs["max_concurrent_subcalls"] = self.rlm.max_concurrent_subcalls
+
+        # Create the environment without a context payload
+        env = get_environment(self.rlm.environment_type, env_kwargs)
+        self.rlm._persistent_env = env
+        self.rlm._skip_next_context_add = True
 
     def _get_message_history(self) -> list[dict[str, Any]]:
         """Retrieve the message history from the last completion() call.
@@ -166,6 +202,10 @@ class PersistentSession:
     def load_state(self, state: SessionState) -> None:
         """Restore REPL state and message history into the RLM's environment.
 
+        Automatically creates the REPL environment if it doesn't exist yet
+        (no LM API call needed — uses the RLM's config to instantiate a
+        LocalREPL directly).
+
         After calling this, use rlm.completion() with a minimal/empty prompt
         to continue the conversation. The REPL will already have all variables,
         and the message history will be available to the model.
@@ -173,6 +213,9 @@ class PersistentSession:
         Args:
             state: SessionState previously returned by save_state().
         """
+        # Auto-initialize environment if it doesn't exist yet.
+        # This avoids requiring a dummy completion() call.
+        self.init_env()
         env = self._get_repl_env()
 
         # 1. Restore the REPL namespace (all user variables).

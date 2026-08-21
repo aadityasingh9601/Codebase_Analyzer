@@ -61,16 +61,8 @@ print("=" * 60)
 
 rlm = create_rlm()
 
-# Must call completion() once to initialize the LocalREPL environment.
-# The prompt here is just a placeholder — it won't be used because
-# the skip flag will prevent it from being added as a context.
-_ = rlm.completion(
-    prompt=".",
-    root_prompt="Session initialization placeholder."
-)
-
-# Restore the saved state — this injects the REPL namespace and
-# sets _skip_next_context_add so the next call doesn't duplicate context.
+# Restore the saved state — creates the REPL environment automatically
+# (no LM API call needed) and injects all saved variables + message history.
 session = PersistentSession(rlm)
 session.load(user_id="user123", storage_path="./rlm_sessions")
 
@@ -86,7 +78,7 @@ print("\nAsking question without re-sending context...")
 result = rlm.completion(
     prompt="",
     root_prompt=(
-        "Count all the occurrences of word frog, task & focus (both uppercase and "
+        "Count all the occurrences of words is, the & and (both uppercase and "
         "lowercase) in the stored context and print each count on a new line."
     )
 )

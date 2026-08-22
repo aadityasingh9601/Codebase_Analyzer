@@ -9,3 +9,4 @@
 **/*.pdf
 **/venv
 **/__pycache__
+**/*.txt

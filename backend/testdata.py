@@ -1,3 +1,2587 @@
+codebase_content="""
+    CODEBASE STRUCTURE:
+
+FILE TREE:
+README.md
+app.js
+assets/videos/vid1.mp4
+index.html
+style.css
+
+
+FILE CONTENTS:
+
+=== FILE:README.md ===
+# Adobe-UI-clone
+This is an Adobe UI clone.
+
+=== END:README.md ===
+
+=== FILE:app.js ===
+let navbtn_a = document.querySelectorAll(".nav-btn-a");
+let nav_btn_icons = document.querySelectorAll(".nav-btn-icon");
+let nav_btn_dropdowns = document.querySelectorAll(".nav-btn-dropdown");
+let topsection = document.querySelector(".top-section");
+let hamMenu = document.querySelector(".ham-menu");
+let hamMenu_ls = document.querySelector(".ham-menu-ls");
+let hamMenu_ls_items = document.querySelectorAll(".ham-menu-ls-item");
+let hmli_icons = document.querySelectorAll(".hmli-icon");
+let hamMenu_ls_item_ls = document.querySelectorAll(".ham-menu-ls-item-ls");
+let elements = document.querySelectorAll(".element");
+let elementContents = document.querySelectorAll(".element-content");
+
+for (let each of elements) {
+  each.addEventListener("click", (event) => {
+    elementContents.forEach((elementContent) => {
+      elementContent.classList.add("toggle");
+    });
+    elementContents[event.target.id].classList.toggle("toggle");
+  });
+}
+
+for (let each of hamMenu_ls_items) {
+  each.addEventListener("click", (event) => {
+    hamMenu_ls_item_ls.forEach((item) => {
+      item.classList.add("toggle");
+    });
+    hmli_icons.forEach((icon) => {
+      icon.classList.remove("transform2");
+    });
+
+    hamMenu_ls_item_ls[event.target.id].classList.toggle("toggle");
+    hmli_icons[event.target.id].classList.toggle("transform2");
+  });
+}
+
+for (let each of navbtn_a) {
+  each.addEventListener("click", (event) => {
+    nav_btn_dropdowns.forEach((dropdown) => {
+      dropdown.classList.add("toggle");
+    });
+    nav_btn_icons.forEach((icon) => {
+      icon.classList.remove("transform");
+    });
+
+    nav_btn_dropdowns[event.target.id].classList.remove("toggle");
+    nav_btn_icons[event.target.id].classList.add("transform");
+  });
+}
+
+document.addEventListener("click", (event) => {
+  if (!event.target.matches(".nav-btn")) {
+    nav_btn_dropdowns.forEach((dropdown) => {
+      dropdown.classList.add("toggle");
+    });
+    nav_btn_icons.forEach((icon) => {
+      icon.classList.remove("transform");
+    });
+  }
+});
+
+hamMenu.addEventListener("click", () => {
+  hamMenu_ls.classList.toggle("toggle");
+});
+
+=== END:app.js ===
+
+=== FILE:assets/videos/vid1.mp4 ===
+
+=== END:assets/videos/vid1.mp4 ===
+
+=== FILE:index.html ===
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Adobe Clone</title>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css"
+      integrity="sha512-Kc323vGBEqzTmouAECnVceyQqyqdsSiqLQISBL29aUW4U/M7pSPA/gEUZQqv1cwx4OnYxTxve5UMg5GT6L4JJg=="
+      crossorigin="anonymous"
+      referrerpolicy="no-referrer"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <div class="ham-menu-ls toggle">
+        <a class="ham-menu-ls-item"
+          ><button class="nav-btn" id="0">Creativity & Design</button>
+          <?xml version="1.0" encoding="utf-8"?>
+          <svg
+            id="0"
+            class="nav-btn-icon hmli-icon"
+            width="21px"
+            height="21px"
+            viewBox="0 0 24 20"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M7 10L12 15L17 10"
+              stroke="#000000"
+              stroke-width="1"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </a>
+        <div class="ham-menu-ls-item-ls toggle" id="0">
+          <div class="menu-section-head element" id="0">
+            <span>Quick Actions</span>
+
+            <?xml version="1.0" encoding="utf-8"?>
+            <svg
+              style="margin-right: 1rem"
+              id="0-1"
+              class="nav-btn-icon"
+              width="21px"
+              height="21px"
+              viewBox="0 0 24 20"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M7 10L12 15L17 10"
+                stroke="#000000"
+                stroke-width="1"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="element-content toggle">
+            <a href=""> Remove Background</a><br />
+            <a href=""> Resize Image</a><br />
+            <a href="">Convert image to SVG</a><br />
+            <a href="">Convert video to GIF</a><br />
+            <a href="">Create a QR code</a><br />
+            <a href=""
+              ><button
+                class="btn"
+                style="
+                  height: 1.8rem;
+                  font-size: 0.81rem;
+                  color: white;
+                  background-color: #1473e6;
+                  border-color: #1473e6;
+                "
+                ;
+              >
+                <b>See all quick actions</b>
+              </button></a
+            >
+          </div>
+
+          <div class="menu-section-head element" id="1">
+            <span>Create New</span>
+            <?xml version="1.0" encoding="utf-8"?>
+            <svg
+              style="margin-right: 1rem"
+              id="0-1"
+              class="nav-btn-icon"
+              width="21px"
+              height="21px"
+              viewBox="0 0 24 20"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M7 10L12 15L17 10"
+                stroke="#000000"
+                stroke-width="1"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="element-content toggle">
+            <a href="">Resume</a><br />
+            <a href="">Posters</a><br />
+            <a href="">Cards</a><br />
+            <a href="">Instagram Posts</a><br />
+            <a href="">Youtube video</a><br />
+            <a href=""
+              ><button
+                class="btn"
+                style="
+                  height: 1.8rem;
+                  font-size: 0.81rem;
+                  color: black;
+                  background-color: white;
+                "
+                ;
+              >
+                Create now
+              </button></a
+            >
+          </div>
+
+          <div class="menu-section-head element" id="2">
+            <span>Featured Products</span>
+            <?xml version="1.0" encoding="utf-8"?>
+            <svg
+              style="margin-right: 1rem"
+              id="0-1"
+              class="nav-btn-icon"
+              width="21px"
+              height="21px"
+              viewBox="0 0 24 20"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M7 10L12 15L17 10"
+                stroke="#000000"
+                stroke-width="1"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="element-content toggle">
+            <a href=""> <span>Creative Cloud</span><br /> </a><br />
+
+            <a href=""> <span>Adobe Express</span><br /> </a><br />
+
+            <a href=""> <span>Photoshop</span><br /> </a><br />
+
+            <a href=""> <span>Premiere Pro</span><br /> </a><br />
+
+            <a href=""> <span>Illustrator</span><br /> </a>
+            <a href=""
+              ><button
+                class="btn"
+                style="
+                  height: 1.8rem;
+                  font-size: 0.81rem;
+                  color: black;
+                  background-color: white;
+                  margin-top: 0.35rem;
+                "
+                ;
+              >
+                See plans and pricing
+              </button></a
+            >
+          </div>
+
+          <div class="menu-section-head element" id="3">
+            <span>Artificial Intelligence</span>
+            <?xml version="1.0" encoding="utf-8"?>
+            <svg
+              style="margin-right: 1rem"
+              id="0-1"
+              class="nav-btn-icon"
+              width="21px"
+              height="21px"
+              viewBox="0 0 24 20"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M7 10L12 15L17 10"
+                stroke="#000000"
+                stroke-width="1"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="element-content toggle">
+            <a href=""> <span>AI Overview</span><br /> </a><br />
+
+            <a href=""> <span>Adobe Firefly</span><br /> </a><br />
+          </div>
+        </div>
+
+        <a class="ham-menu-ls-item"
+          ><button class="nav-btn" id="1">PDF & E-signatures</button>
+          <?xml version="1.0" encoding="utf-8"?>
+          <svg
+            id="1"
+            class="nav-btn-icon hmli-icon"
+            width="21px"
+            height="21px"
+            viewBox="0 0 24 20"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M7 10L12 15L17 10"
+              stroke="#000000"
+              stroke-width="1"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </a>
+        <div class="ham-menu-ls-item-ls toggle" id="1">
+          <div class="menu-section-head element" id="4">
+            <span>Products</span>
+            <?xml version="1.0" encoding="utf-8"?>
+            <svg
+              style="margin-right: 1rem"
+              id="0-1"
+              class="nav-btn-icon"
+              width="21px"
+              height="21px"
+              viewBox="0 0 24 20"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M7 10L12 15L17 10"
+                stroke="#000000"
+                stroke-width="1"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="element-content toggle">
+            <a href="">
+              <span>Adobe Acrobat</span><br />
+              <span
+                style="font-size: 0.69rem; color: #4e4e4e; margin-top: 0.15rem"
+                >The essential PDF solution</span
+              > </a
+            ><br />
+            <button
+              class="btn"
+              style="
+                height: 1.8rem;
+                font-size: 0.81rem;
+                color: white;
+                background-color: #1473e6;
+                border-color: #1473e6;
+                margin-bottom: 0.4rem;
+              "
+              ;
+            >
+              <b>Acrobat plans and pricing</b>
+            </button>
+            <a href="">
+              <span>Adobe Acrobat Sign</span><br />
+              <span
+                style="font-size: 0.69rem; color: #4e4e4e; margin-top: 0.15rem"
+                >The essential e-signature solution</span
+              > </a
+            ><br />
+            <div
+              style="
+                font-size: 0.84rem;
+                color: #1473e6;
+                margin: 0.1rem 3.1rem 0 0;
+              "
+            >
+              E-signature plans and pricing
+            </div>
+            <br />
+            <a href="">
+              <span>Acrobat Reader</span><br />
+              <span
+                style="font-size: 0.69rem; color: #4e4e4e; margin-top: 0.15rem"
+                >View, scan and annotate PDFs</span
+              > </a
+            ><br />
+            <div
+              style="
+                font-size: 0.84rem;
+                color: #1473e6;
+                margin: 0.1rem 3.1rem 0 0;
+              "
+            >
+              View all products
+            </div>
+          </div>
+
+          <div class="menu-section-head element" id="5">
+            <span>Shop for</span>
+            <?xml version="1.0" encoding="utf-8"?>
+            <svg
+              style="margin-right: 1rem"
+              id="0-1"
+              class="nav-btn-icon"
+              width="21px"
+              height="21px"
+              viewBox="0 0 24 20"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M7 10L12 15L17 10"
+                stroke="#000000"
+                stroke-width="1"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="element-content toggle">
+            <a href="">Business</a><br />
+            <a href="">Student& Teachers</a><br />
+            <a href="">Home & Personal</a><br />
+            <a href="">Government</a>
+          </div>
+
+          <div class="menu-section-head element" id="6">
+            <span>Artificial Intelligence</span>
+            <?xml version="1.0" encoding="utf-8"?>
+            <svg
+              style="margin-right: 1rem"
+              id="0-1"
+              class="nav-btn-icon"
+              width="21px"
+              height="21px"
+              viewBox="0 0 24 20"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M7 10L12 15L17 10"
+                stroke="#000000"
+                stroke-width="1"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="element-content toggle">
+            <a href=""> <span>AI Overview</span><br /> </a><br />
+            <a href=""> <span>AI in Acrobat</span><br /> </a><br />
+          </div>
+
+          <div class="menu-section-head element" id="7">
+            <span>Online tools</span>
+            <?xml version="1.0" encoding="utf-8"?>
+            <svg
+              style="margin-right: 1rem"
+              id="0-1"
+              class="nav-btn-icon"
+              width="21px"
+              height="21px"
+              viewBox="0 0 24 20"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M7 10L12 15L17 10"
+                stroke="#000000"
+                stroke-width="1"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="element-content toggle">
+            <a href="">PDF to Word</a><br />
+            <a href="">Compress PDF</a><br />
+            <a href="">Merge PDF</a><br />
+            <a href="">Word to PDF</a><br />
+            <a href="">View all tools</a>
+          </div>
+
+          <div class="menu-section-head element" id="8">
+            <span>Business Resources</span>
+            <?xml version="1.0" encoding="utf-8"?>
+            <svg
+              style="margin-right: 1rem"
+              id="0-1"
+              class="nav-btn-icon"
+              width="21px"
+              height="21px"
+              viewBox="0 0 24 20"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M7 10L12 15L17 10"
+                stroke="#000000"
+                stroke-width="1"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="element-content toggle">
+            <a href="">Developer resources</a><br />
+            <a href="">E-signature tutorials</a><br />
+            <a href="">Events & Webinars</a><br />
+            <a href="">Articles & Reports</a>
+          </div>
+        </div>
+
+        <a class="ham-menu-ls-item"
+          ><button class="nav-btn" id="2">Marketing&Commerce</button>
+          <?xml version="1.0" encoding="utf-8"?>
+          <svg
+            id="2"
+            class="nav-btn-icon hmli-icon"
+            width="21px"
+            height="21px"
+            viewBox="0 0 24 20"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M7 10L12 15L17 10"
+              stroke="#000000"
+              stroke-width="1"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </a>
+        <div class="ham-menu-ls-item-ls toggle" id="2">
+          <div class="menu-section-head element" id="9">
+            <span>Solutions</span>
+            <?xml version="1.0" encoding="utf-8"?>
+            <svg
+              style="margin-right: 1rem"
+              id="0-1"
+              class="nav-btn-icon"
+              width="21px"
+              height="21px"
+              viewBox="0 0 24 20"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M7 10L12 15L17 10"
+                stroke="#000000"
+                stroke-width="1"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="element-content toggle">
+            <a href="">Data insights & audiences</a><br />
+            <a href="">Personalised insights & engagement</a><br />
+            <a href="">Content management</a><br />
+            <a href="">Content supply chain</a><br />
+            <a href="">Commerce</a><br />
+            <a href="">Adobe Stock</a><br />
+            <a href="">Customer journeys</a><br />
+            <a href="">B2B Marketing</a><br />
+            <a href=""
+              ><button
+                class="btn"
+                style="
+                  height: 1.8rem;
+                  font-size: 0.81rem;
+                  color: white;
+                  background-color: #1473e6;
+                  border-color: #1473e6;
+                "
+                ;
+              >
+                <b>Request a demo</b>
+              </button></a
+            >
+          </div>
+
+          <div class="menu-section-head element" id="10">
+            <span>Products</span>
+            <?xml version="1.0" encoding="utf-8"?>
+            <svg
+              style="margin-right: 1rem"
+              id="0-1"
+              class="nav-btn-icon"
+              width="21px"
+              height="21px"
+              viewBox="0 0 24 20"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M7 10L12 15L17 10"
+                stroke="#000000"
+                stroke-width="1"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="element-content toggle">
+            <a href="">Analytics</a><br />
+            <a href="">Real-Time CDP</a><br />
+            <a href="">Marketo Engage</a><br />
+            <a href="">Commerce (Magento)</a><br />
+            <a href="">Workfront</a><br />
+            <a href="">Customer Journey Analytics</a><br />
+            <a href="">Product Analytics</a><br />
+            <a href="">Journey Optimizer</a><br />
+            <a href="">Experience Manager Sites (CMS)</a><br />
+            <a href="">Experience Manager Assets (DAM)</a><br />
+            <a href="" style="color: #1473e6">View all products</a>
+          </div>
+
+          <div class="menu-section-head element" id="11">
+            <span>Artificial Intelligence</span>
+            <?xml version="1.0" encoding="utf-8"?>
+            <svg
+              style="margin-right: 1rem"
+              id="0-1"
+              class="nav-btn-icon"
+              width="21px"
+              height="21px"
+              viewBox="0 0 24 20"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M7 10L12 15L17 10"
+                stroke="#000000"
+                stroke-width="1"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="element-content toggle">
+            <a href="">AI Overview</a><br />
+            <a href="">Sensei</a><br />
+            <a href="">Sensei GenAI</a>
+          </div>
+
+          <div class="menu-section-head element" id="12">
+            <span>Resources</span>
+            <?xml version="1.0" encoding="utf-8"?>
+            <svg
+              style="margin-right: 1rem"
+              id="0-1"
+              class="nav-btn-icon"
+              width="21px"
+              height="21px"
+              viewBox="0 0 24 20"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M7 10L12 15L17 10"
+                stroke="#000000"
+                stroke-width="1"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="element-content toggle">
+            <a href="">Resource Center</a><br />
+            <a href="">Customer Success Stories</a><br />
+            <a href="">Experience Cloud Blog</a>
+          </div>
+
+          <div class="menu-section-head element" id="13">
+            <span>Support </span>
+            <?xml version="1.0" encoding="utf-8"?>
+            <svg
+              style="margin-right: 1rem"
+              id="0-1"
+              class="nav-btn-icon"
+              width="21px"
+              height="21px"
+              viewBox="0 0 24 20"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M7 10L12 15L17 10"
+                stroke="#000000"
+                stroke-width="1"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="element-content toggle">
+            <a href="">Services and Support</a><br />
+            <a href="">Training</a><br />
+            <a href="">Help Documentation</a><br />
+            <a href="">Partners</a>
+          </div>
+
+          <div class="menu-section-head element" id="14">
+            <span>Events</span>
+            <?xml version="1.0" encoding="utf-8"?>
+            <svg
+              style="margin-right: 1rem"
+              id="0-1"
+              class="nav-btn-icon"
+              width="21px"
+              height="21px"
+              viewBox="0 0 24 20"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M7 10L12 15L17 10"
+                stroke="#000000"
+                stroke-width="1"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="element-content toggle">
+            <a href="">Adobe Summit</a><br />
+          </div>
+        </div>
+
+        <a class="ham-menu-ls-item"
+          ><button class="nav-btn" id="3">Help&Support</button>
+          <?xml version="1.0" encoding="utf-8"?>
+          <svg
+            id="3"
+            class="nav-btn-icon hmli-icon"
+            width="21px"
+            height="21px"
+            viewBox="0 0 24 20"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M7 10L12 15L17 10"
+              stroke="#000000"
+              stroke-width="1"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </a>
+        <div class="ham-menu-ls-item-ls toggle" id="3">
+          <div class="menu-section-head element" id="15">
+            <span>Help and support</span>
+            <?xml version="1.0" encoding="utf-8"?>
+            <svg
+              style="margin-right: 1rem"
+              id="0-1"
+              class="nav-btn-icon"
+              width="21px"
+              height="21px"
+              viewBox="0 0 24 20"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M7 10L12 15L17 10"
+                stroke="#000000"
+                stroke-width="1"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="element-content toggle">
+            <a href=""> <span>Help Centre</span><br /> </a><br />
+            <a href=""> <span>Enterprise Support</span><br /> </a><br />
+            <a href=""> Adobe Support Community </a><br />
+
+            <a href=""
+              ><button
+                class="btn"
+                style="
+                  height: 1.95rem;
+                  font-size: 0.81rem;
+                  color: black;
+                  background-color: white;
+                  margin-bottom: 0.25rem;
+                "
+                ;
+              >
+                Download and install
+              </button></a
+            >
+
+            <a href=""
+              ><button
+                class="btn"
+                style="
+                  height: 1.95rem;
+                  font-size: 0.81rem;
+                  color: white;
+                  background-color: #1473e6;
+                  border-color: #1473e6;
+                "
+                ;
+              >
+                <b>Contact us</b>
+              </button></a
+            >
+          </div>
+
+          <div class="menu-section-head element" id="16">
+            <span>Common tasks</span>
+            <?xml version="1.0" encoding="utf-8"?>
+            <svg
+              style="margin-right: 1rem"
+              id="0-1"
+              class="nav-btn-icon"
+              width="21px"
+              height="21px"
+              viewBox="0 0 24 20"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M7 10L12 15L17 10"
+                stroke="#000000"
+                stroke-width="1"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="element-content toggle">
+            <a href="">Manage my account</a><br />
+            <a href="">Manage my plan</a><br />
+            <a href="">Subscribe to Adobe Status</a>
+          </div>
+
+          <div class="menu-section-head element" id="17">
+            <span>Learning Resources</span>
+            <?xml version="1.0" encoding="utf-8"?>
+            <svg
+              style="margin-right: 1rem"
+              id="0-1"
+              class="nav-btn-icon"
+              width="21px"
+              height="21px"
+              viewBox="0 0 24 20"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M7 10L12 15L17 10"
+                stroke="#000000"
+                stroke-width="1"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+          <div class="element-content toggle">
+            <a href=""> <span>Creative Cloud tutorials</span><br /> </a><br />
+
+            <a href=""> <span>Adobe Express</span><br /> </a><br />
+
+            <a href=""> <span>Acrobat tutorials</span><br /> </a><br />
+
+            <a href=""> <span>Adobe Experience League</span><br /> </a>
+          </div>
+        </div>
+      </div>
+
+      <div class="nav-btn-dropdown toggle" id="0">
+        <div class="menu first">
+          <div class="menu-column">
+            <div class="menu-section">
+              <div class="menu-section-head">Quick Actions</div>
+              <a href="">
+                <img
+                  src="https://www.adobe.com/in/federal/globalnav/acom/assets/remove-background.svg"
+                  style="height: 18px; width: 18px; margin-right: 0.2rem"
+                />
+                Remove Background</a
+              ><br />
+              <a href=""
+                ><img
+                  src="https://www.adobe.com/in/federal/globalnav/acom/assets/resize-icon-44px.svg"
+                  style="height: 18px; width: 18px; margin-right: 0.2rem"
+                />
+                Resize Image</a
+              ><br />
+              <a href=""
+                ><img
+                  src="https://www.adobe.com/in/federal/globalnav/acom/assets/convert.svg"
+                  style="height: 18px; width: 18px; margin-right: 0.2rem"
+                />Convert image to SVG</a
+              ><br />
+              <a href=""
+                ><img
+                  src="https://www.adobe.com/in/federal/globalnav/acom/assets/convert.svg"
+                  style="height: 18px; width: 18px; margin-right: 0.2rem"
+                />Convert video to GIF</a
+              ><br />
+              <a href=""
+                ><img
+                  src="https://www.adobe.com/in/federal/globalnav/acom/assets/create-qr-code.svg"
+                  style="height: 18px; width: 18px; margin-right: 0.2rem"
+                />Create a QR code</a
+              ><br />
+              <a href=""
+                ><button
+                  class="btn"
+                  style="
+                    height: 1.8rem;
+                    font-size: 0.81rem;
+                    color: white;
+                    background-color: #1473e6;
+                    border-color: #1473e6;
+                  "
+                  ;
+                >
+                  <b>See all quick actions</b>
+                </button></a
+              >
+            </div>
+          </div>
+          <div class="menu-column">
+            <div class="menu-section">
+              <div class="menu-section-head">Create New</div>
+              <a href=""
+                ><img
+                  src="https://www.adobe.com/in/federal/globalnav/acom/fragments/cc/media_1dd3766daeb4a51c1b6481c1e64508194f9744cf1.png"
+                  style="height: 21px; width: 21px; margin-right: 0.2rem"
+                />Resume</a
+              ><br />
+              <a href=""
+                ><img
+                  src="https://www.adobe.com/in/federal/globalnav/acom/assets/poster.svg"
+                  style="height: 18px; width: 18px; margin-right: 0.2rem"
+                />Posters</a
+              ><br />
+              <a href=""
+                ><img
+                  src="https://www.adobe.com/in/federal/globalnav/acom/assets/greetingcard.svg"
+                  style="height: 21px; width: 21px; margin-right: 0.2rem"
+                />Cards</a
+              ><br />
+              <a href=""
+                ><img
+                  src="https://www.adobe.com/in/federal/globalnav/acom/assets/instagram-logo.svg"
+                  style="height: 21px; width: 21px; margin-right: 0.2rem"
+                />Instagram Posts</a
+              ><br />
+              <a href=""
+                ><img
+                  src="https://www.adobe.com/in/federal/globalnav/acom/assets/youtube.svg"
+                  style="height: 21px; width: 21px; margin: 0 0.2rem 0 0"
+                />Youtube video</a
+              ><br />
+              <a href=""
+                ><button
+                  class="btn"
+                  style="
+                    height: 1.8rem;
+                    font-size: 0.81rem;
+                    color: black;
+                    background-color: white;
+                  "
+                  ;
+                >
+                  Create now
+                </button></a
+              >
+            </div>
+          </div>
+          <div class="menu-column">
+            <div class="menu-section">
+              <div class="menu-section-head">Featurd Products</div>
+              <a href="">
+                <span>Creative Cloud</span><br />
+                <span
+                  style="
+                    font-size: 0.69rem;
+                    color: #4e4e4e;
+                    margin-top: 0.15rem;
+                  "
+                  >Over 20 Creative Cloud Apps</span
+                > </a
+              ><br />
+
+              <a href="">
+                <span>Adobe Express</span><br />
+                <span
+                  style="
+                    font-size: 0.69rem;
+                    color: #4e4e4e;
+                    margin-top: 0.15rem;
+                  "
+                  >All-in-one design, video, photo and PDF app</span
+                > </a
+              ><br />
+
+              <a href="">
+                <span>Photoshop</span><br />
+                <span
+                  style="
+                    font-size: 0.69rem;
+                    color: #4e4e4e;
+                    margin-top: 0.15rem;
+                  "
+                  >Image editing and design
+                </span> </a
+              ><br />
+
+              <a href="">
+                <span>Premiere Pro</span><br />
+                <span
+                  style="
+                    font-size: 0.69rem;
+                    color: #4e4e4e;
+                    margin-top: 0.15rem;
+                  "
+                  >Video editing and production</span
+                > </a
+              ><br />
+
+              <a href="">
+                <span>Illustrator</span><br />
+                <span
+                  style="
+                    font-size: 0.69rem;
+                    color: #4e4e4e;
+                    margin-top: 0.15rem;
+                  "
+                  >Vector graphics and illustration</span
+                >
+              </a>
+              <a href=""
+                ><button
+                  class="btn"
+                  style="
+                    height: 1.8rem;
+                    font-size: 0.81rem;
+                    color: black;
+                    background-color: white;
+                    margin-top: 0.35rem;
+                  "
+                  ;
+                >
+                  See plans and pricing
+                </button></a
+              >
+            </div>
+
+            <div class="menu-section">
+              <div class="menu-section-head">Artificial Intelligence</div>
+              <a href="">
+                <span>AI Overview</span><br />
+                <span
+                  style="
+                    font-size: 0.69rem;
+                    color: #4e4e4e;
+                    margin-top: 0.15rem;
+                  "
+                  >About AI at Adobe</span
+                > </a
+              ><br />
+
+              <a href="">
+                <span>Adobe Firefly</span><br />
+                <span
+                  style="
+                    font-size: 0.69rem;
+                    color: #4e4e4e;
+                    margin-top: 0.15rem;
+                  "
+                  >AI-powered content creation</span
+                > </a
+              ><br />
+            </div>
+          </div>
+          <div class="menu-column">
+            <div class="card2">
+              <div class="image">
+                <img
+                  src="https://www.adobe.com/in/federal/globalnav/acom/fragments/cc/cc-promo/media_168d05efea264f933c5935f66b1fec3763ec293ee.jpeg"
+                />
+              </div>
+              <div class="text">
+                <span style="font-size: 0.84rem; margin: 0.2rem 0.2rem 0.8rem 0"
+                  ><b>THE CREATIVITY CONFERENCE</b></span
+                >
+                <span style="font-size: 1.26rem; margin-bottom: 0.6rem"
+                  ><b>GET READY FOR ADOBE MAX</b></span
+                >
+                <span style="font-size: 0.84rem; margin-bottom: 0.2rem"
+                  >Join us for the creative event of the year 15-16 Oct.</span
+                >
+                <div
+                  style="
+                    font-size: 0.84rem;
+                    color: #1473e6;
+                    margin: 0.1rem 2.8rem 0 0;
+                  "
+                >
+                  Register now
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="nav-btn-dropdown toggle" id="1">
+        <div class="menu second">
+          <div class="menu-column">
+            <div class="menu-section">
+              <div class="menu-section-head">Products</div>
+              <a href="">
+                <span>Adobe Acrobat</span><br />
+                <span
+                  style="
+                    font-size: 0.69rem;
+                    color: #4e4e4e;
+                    margin-top: 0.15rem;
+                  "
+                  >The essential PDF solution</span
+                > </a
+              ><br />
+              <button
+                class="btn"
+                style="
+                  height: 1.8rem;
+                  font-size: 0.81rem;
+                  color: white;
+                  background-color: #1473e6;
+                  border-color: #1473e6;
+                  margin-bottom: 0.4rem;
+                "
+                ;
+              >
+                <b>Acrobat plans and pricing</b>
+              </button>
+              <a href="">
+                <span>Adobe Acrobat Sign</span><br />
+                <span
+                  style="
+                    font-size: 0.69rem;
+                    color: #4e4e4e;
+                    margin-top: 0.15rem;
+                  "
+                  >The essential e-signature solution</span
+                > </a
+              ><br />
+              <div
+                style="
+                  font-size: 0.84rem;
+                  color: #1473e6;
+                  margin: 0.1rem 3.1rem 0 0;
+                "
+              >
+                E-signature plans and pricing
+              </div>
+              <br />
+              <a href="">
+                <span>Acrobat Reader</span><br />
+                <span
+                  style="
+                    font-size: 0.69rem;
+                    color: #4e4e4e;
+                    margin-top: 0.15rem;
+                  "
+                  >View, scan and annotate PDFs</span
+                > </a
+              ><br />
+              <div
+                style="
+                  font-size: 0.84rem;
+                  color: #1473e6;
+                  margin: 0.1rem 3.1rem 0 0;
+                "
+              >
+                View all products
+              </div>
+            </div>
+          </div>
+          <div class="menu-column">
+            <div class="menu-section">
+              <div class="menu-section-head">Shop for</div>
+              <a href="">Business</a><br />
+              <a href="">Student& Teachers</a><br />
+              <a href="">Home & Personal</a><br />
+              <a href="">Government</a>
+            </div>
+            <div class="menu-section">
+              <div class="menu-section-head">Artificial Intelligence</div>
+              <a href="">
+                <span>AI Overview</span><br />
+                <span
+                  style="
+                    font-size: 0.69rem;
+                    color: #4e4e4e;
+                    margin-top: 0.15rem;
+                  "
+                  >About AI at Adobe</span
+                > </a
+              ><br />
+              <a href="">
+                <span>AI in Acrobat</span><br />
+                <span
+                  style="
+                    font-size: 0.69rem;
+                    color: #4e4e4e;
+                    margin-top: 0.15rem;
+                  "
+                  >Generative AI document & PDF Tool</span
+                > </a
+              ><br />
+            </div>
+          </div>
+          <div class="menu-column">
+            <div class="menu-section">
+              <div class="menu-section-head">Online tools</div>
+              <a href="">PDF to Word</a><br />
+              <a href="">Compress PDF</a><br />
+              <a href="">Merge PDF</a><br />
+              <a href="">Word to PDF</a><br />
+              <a href="">View all tools</a>
+            </div>
+            <div class="menu-section">
+              <div class="menu-section-head">Business Resources</div>
+              <a href="">Developer resources</a><br />
+              <a href="">E-signature tutorials</a><br />
+              <a href="">Events & Webinars</a><br />
+              <a href="">Articles & Reports</a>
+            </div>
+          </div>
+          <div class="menu-column">
+            <div class="card3">
+              <div class="text">
+                <span
+                  style="font-size: 0.87rem; margin: 0.2rem 3.2rem 0.35rem 0"
+                  ><b>Acrobat Pro</b></span
+                >
+                <span style="font-size: 0.84rem; margin-bottom: 0.2rem"
+                  >Create, edit and sign documents with our most advanced PDF
+                  and e-signature solution.</span
+                >
+                <div
+                  style="
+                    font-size: 0.84rem;
+                    color: #1473e6;
+                    margin: 0.1rem 3.1rem 0 0;
+                  "
+                >
+                  Start free trial
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="nav-btn-dropdown toggle" id="2">
+        <div class="menu third">
+          <div class="menu-column">
+            <div class="menu-section">
+              <div style="margin-bottom: 0.6rem">
+                <img
+                  src="https://www.adobe.com/federal/assets/svgs/experience-cloud-40.svg"
+                  style="height: 25.5px; width: 25.5px"
+                />
+                <span style="font-size: 0.9rem; color: #1473e6"
+                  >Adobe Experience Cloud</span
+                >
+              </div>
+              <div class="menu-section-head">Solutions</div>
+              <a href="">Data insights & audiences</a><br />
+              <a href="">Personalised insights & engagement</a><br />
+              <a href="">Content management</a><br />
+              <a href="">Content supply chain</a><br />
+              <a href="">Commerce</a><br />
+              <a href="">Adobe Stock</a><br />
+              <a href="">Customer journeys</a><br />
+              <a href="">B2B Marketing</a><br />
+              <a href=""
+                ><button
+                  class="btn"
+                  style="
+                    height: 1.8rem;
+                    font-size: 0.81rem;
+                    color: white;
+                    background-color: #1473e6;
+                    border-color: #1473e6;
+                  "
+                  ;
+                >
+                  <b>Request a demo</b>
+                </button></a
+              >
+            </div>
+          </div>
+          <div class="menu-column">
+            <div class="menu-section">
+              <div class="menu-section-head">Products</div>
+              <a href="">Analytics</a><br />
+              <a href="">Real-Time CDP</a><br />
+              <a href="">Marketo Engage</a><br />
+              <a href="">Commerce (Magento)</a><br />
+              <a href="">Workfront</a><br />
+              <a href="">Customer Journey Analytics</a><br />
+              <a href="">Product Analytics</a><br />
+              <a href="">Journey Optimizer</a><br />
+              <a href="">Experience Manager Sites (CMS)</a><br />
+              <a href="">Experience Manager Assets (DAM)</a><br />
+              <a href="" style="color: #1473e6">View all products</a>
+            </div>
+          </div>
+          <div class="menu-column">
+            <div class="menu-section">
+              <div class="menu-section-head">Artificial Intelligence</div>
+              <a href="">AI Overview</a><br />
+              <a href="">Sensei</a><br />
+              <a href="">Sensei GenAI</a>
+            </div>
+            <div class="menu-section">
+              <div class="menu-section-head">Resources</div>
+              <a href="">Resource Center</a><br />
+              <a href="">Customer Success Stories</a><br />
+              <a href="">Experience Cloud Blog</a>
+            </div>
+          </div>
+          <div class="menu-column">
+            <div class="menu-section">
+              <div class="menu-section-head">Support</div>
+              <a href="">Services and Support</a><br />
+              <a href="">Training</a><br />
+              <a href="">Help Documentation</a><br />
+              <a href="">Partners</a>
+            </div>
+
+            <div class="menu-section">
+              <div class="menu-section-head">Events</div>
+              <a href="">Adobe Summit</a><br />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="nav-btn-dropdown toggle" id="3">
+        <div class="menu fourth">
+          <div class="menu-column">
+            <div class="menu-section">
+              <div class="menu-section-head">Help and Support</div>
+              <a href="">
+                <span>Help Centre</span><br />
+                <span
+                  style="
+                    font-size: 0.69rem;
+                    color: #4e4e4e;
+                    margin-top: 0.15rem;
+                  "
+                  >Troubleshooting and how-tos</span
+                > </a
+              ><br />
+              <a href="">
+                <span>Enterprise Support</span><br />
+                <span
+                  style="
+                    font-size: 0.69rem;
+                    color: #4e4e4e;
+                    margin-top: 0.15rem;
+                  "
+                  >Dedicated help for large organisations</span
+                > </a
+              ><br />
+              <a href=""> Adobe Support Community </a><br />
+
+              <a href=""
+                ><button
+                  class="btn"
+                  style="
+                    height: 1.95rem;
+                    font-size: 0.81rem;
+                    color: black;
+                    background-color: white;
+                    margin-bottom: 0.25rem;
+                  "
+                  ;
+                >
+                  Download and install
+                </button></a
+              >
+
+              <a href=""
+                ><button
+                  class="btn"
+                  style="
+                    height: 1.95rem;
+                    font-size: 0.81rem;
+                    color: white;
+                    background-color: #1473e6;
+                    border-color: #1473e6;
+                  "
+                  ;
+                >
+                  <b>Contact us</b>
+                </button></a
+              >
+            </div>
+          </div>
+          <div class="menu-column">
+            <div class="menu-section">
+              <div class="menu-section-head">Common tasks</div>
+              <a href="">Manage my account</a><br />
+              <a href="">Manage my plan</a><br />
+              <a href="">Subscribe to Adobe Status</a>
+            </div>
+          </div>
+          <div class="menu-column">
+            <div class="menu-section">
+              <div class="menu-section-head">Learning Resources</div>
+              <a href="">
+                <span>Creative Cloud tutorials</span><br />
+                <span
+                  style="
+                    font-size: 0.69rem;
+                    color: #4e4e4e;
+                    margin-top: 0.15rem;
+                  "
+                  >Learn with tutorials designed to inspire</span
+                > </a
+              ><br />
+
+              <a href="">
+                <span>Adobe Express</span><br />
+                <span
+                  style="
+                    font-size: 0.69rem;
+                    color: #4e4e4e;
+                    margin-top: 0.15rem;
+                  "
+                  >Quick videos to start a project</span
+                > </a
+              ><br />
+
+              <a href="">
+                <span>Acrobat tutorials</span><br />
+                <span
+                  style="
+                    font-size: 0.69rem;
+                    color: #4e4e4e;
+                    margin-top: 0.15rem;
+                  "
+                  >Learn the basics or refine your skills
+                </span> </a
+              ><br />
+
+              <a href="">
+                <span>Adobe Experience League</span><br />
+                <span
+                  style="
+                    font-size: 0.69rem;
+                    color: #4e4e4e;
+                    margin-top: 0.15rem;
+                  "
+                  >Personalised learning to develop your skills</span
+                >
+              </a>
+            </div>
+          </div>
+          <div class="menu-column">
+            <div class="card">
+              <div class="image">
+                <img src="assets/images/cardimg1.png" />
+              </div>
+              <div class="text">
+                <b
+                  >Make social content and more with Adobe Express video
+                  tutorials.</b
+                >
+                <div
+                  style="
+                    font-size: 0.81rem;
+                    text-decoration: underline;
+                    margin: 0.25rem 2.9rem 0 0;
+                  "
+                >
+                  Get started
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="main">
+        <div class="navbar">
+          <div class="nav-a">
+            <div class="ham-menu">
+              <i class="fa-solid fa-bars"></i>
+            </div>
+            <div class="logo">
+              <img
+                src="https://www.adobe.com/federal/assets/svgs/adobe-logo.svg"
+              />
+              <span style="font-size: 1.05rem; margin-left: 0.6rem"
+                ><b>Adobe</b></span
+              >
+            </div>
+            <a class="nav-btn-a"
+              ><button class="nav-btn" id="0">Creativity & Design</button>
+              <?xml version="1.0" encoding="utf-8"?>
+              <svg
+                id="0"
+                class="nav-btn-icon"
+                width="21px"
+                height="21px"
+                viewBox="0 0 24 10"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="M7 10L12 15L17 10"
+                  stroke="#000000"
+                  stroke-width="1"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </a>
+            <a class="nav-btn-a"
+              ><button class="nav-btn" id="1">PDF & E-signatures</button>
+              <?xml version="1.0" encoding="utf-8"?>
+              <svg
+                id="1"
+                class="nav-btn-icon"
+                width="21px"
+                height="21px"
+                viewBox="0 0 24 10"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="M7 10L12 15L17 10"
+                  stroke="#000000"
+                  stroke-width="1"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </a>
+            <a class="nav-btn-a"
+              ><button class="nav-btn" id="2">Marketing&Commerce</button>
+              <?xml version="1.0" encoding="utf-8"?>
+              <svg
+                id="2"
+                class="nav-btn-icon"
+                width="21px"
+                height="21px"
+                viewBox="0 0 24 10"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="M7 10L12 15L17 10"
+                  stroke="#000000"
+                  stroke-width="1"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </a>
+            <a class="nav-btn-a"
+              ><button class="nav-btn" id="3">Help&Support</button>
+              <?xml version="1.0" encoding="utf-8"?>
+              <svg
+                id="3"
+                class="nav-btn-icon"
+                width="21px"
+                height="21px"
+                viewBox="0 0 24 10"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="M7 10L12 15L17 10"
+                  stroke="#000000"
+                  stroke-width="1"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </a>
+          </div>
+          <div class="nav-b">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="21px"
+              height="21px"
+              viewBox="0 0 20 20"
+            >
+              <path
+                d="M4.75 2.25H3.25C2.69772 2.25 2.25 2.69772 2.25 3.25V4.75C2.25 5.30228 2.69772 5.75 3.25 5.75H4.75C5.30228 5.75 5.75 5.30228 5.75 4.75V3.25C5.75 2.69772 5.30228 2.25 4.75 2.25Z"
+              ></path>
+              <path
+                d="M10.75 2.25H9.25C8.69772 2.25 8.25 2.69772 8.25 3.25V4.75C8.25 5.30228 8.69772 5.75 9.25 5.75H10.75C11.3023 5.75 11.75 5.30228 11.75 4.75V3.25C11.75 2.69772 11.3023 2.25 10.75 2.25Z"
+              ></path>
+              <path
+                d="M16.75 2.25H15.25C14.6977 2.25 14.25 2.69772 14.25 3.25V4.75C14.25 5.30228 14.6977 5.75 15.25 5.75H16.75C17.3023 5.75 17.75 5.30228 17.75 4.75V3.25C17.75 2.69772 17.3023 2.25 16.75 2.25Z"
+              ></path>
+              <path
+                d="M4.75 8.25H3.25C2.69772 8.25 2.25 8.69772 2.25 9.25V10.75C2.25 11.3023 2.69772 11.75 3.25 11.75H4.75C5.30228 11.75 5.75 11.3023 5.75 10.75V9.25C5.75 8.69772 5.30228 8.25 4.75 8.25Z"
+              ></path>
+              <path
+                d="M10.75 8.25H9.25C8.69772 8.25 8.25 8.69772 8.25 9.25V10.75C8.25 11.3023 8.69772 11.75 9.25 11.75H10.75C11.3023 11.75 11.75 11.3023 11.75 10.75V9.25C11.75 8.69772 11.3023 8.25 10.75 8.25Z"
+              ></path>
+              <path
+                d="M16.75 8.25H15.25C14.6977 8.25 14.25 8.69772 14.25 9.25V10.75C14.25 11.3023 14.6977 11.75 15.25 11.75H16.75C17.3023 11.75 17.75 11.3023 17.75 10.75V9.25C17.75 8.69772 17.3023 8.25 16.75 8.25Z"
+              ></path>
+              <path
+                d="M4.75 14.25H3.25C2.69772 14.25 2.25 14.6977 2.25 15.25V16.75C2.25 17.3023 2.69772 17.75 3.25 17.75H4.75C5.30228 17.75 5.75 17.3023 5.75 16.75V15.25C5.75 14.6977 5.30228 14.25 4.75 14.25Z"
+              ></path>
+              <path
+                d="M10.75 14.25H9.25C8.69772 14.25 8.25 14.6977 8.25 15.25V16.75C8.25 17.3023 8.69772 17.75 9.25 17.75H10.75C11.3023 17.75 11.75 17.3023 11.75 16.75V15.25C11.75 14.6977 11.3023 14.25 10.75 14.25Z"
+              ></path>
+              <path
+                d="M16.75 14.25H15.25C14.6977 14.25 14.25 14.6977 14.25 15.25V16.75C14.25 17.3023 14.6977 17.75 15.25 17.75H16.75C17.3023 17.75 17.75 17.3023 17.75 16.75V15.25C17.75 14.6977 17.3023 14.25 16.75 14.25Z"
+              ></path>
+            </svg>
+            <button>Sign in</button>
+          </div>
+        </div>
+
+        <div class="top-section">
+          <div class="text">
+            <h1>Which superpower will it be?</h1>
+            <p>Free creative fun or premium possiblities?</p>
+          </div>
+
+          <div class="cards">
+            <div class="card-bg">
+              <p><b>ADOBE EXPRESS</b></p>
+              <h3>Celebrate Independence Day!</h3>
+              <p>
+                Create, send, and share Independence Day posts and videos like a
+                pro. Choose a pre-designed template or use the Text-to-Template
+                tool to make your own.
+              </p>
+              <button class="btn">Get adobe express free</button>
+            </div>
+            <div class="card-sm">
+              <p><b>ADOBE CREATIVE CLOUD</b></p>
+              <h3>Save 58% on Creative Cloud All Apps.</h3>
+              <p>
+                Get 20+ apps and generative AI features for less than the price
+                of Photoshop and Acrobat Pro sold separately.
+                <span style="text-decoration: line-through">₹4,630.32/mo</span>,
+                now ₹1,915.14/mo incl. GST.
+              </p>
+              <button class="btn">Save now</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="mid-section">
+          <div class="btn-list">
+            <div class="btn-list-text">Creative Cloud for:</div>
+            <div class="btn-list-btns">
+              <div><button class="btn sm">Everyone</button></div>
+              <div><button class="btn sm">Students</button></div>
+              <div><button class="btn sm">Photographers</button></div>
+              <div><button class="btn sm">Business</button></div>
+              <div><button class="btn sm">Adobe Stock</button></div>
+              <div><button class="btn sm">Special Offers</button></div>
+            </div>
+          </div>
+          <div class="card-section">
+            <div class="card-sm a">
+              <p><b>ADOBE PHOTOSHOP</b></p>
+              <h3>Inspiration to creation. Faster.</h3>
+              <p>
+                Explore new innovations to help you to keep up with what you
+                dream up.
+              </p>
+            </div>
+
+            <div class="card-sm b">
+              <p><b>BUSINESS</b></p>
+              <h3>34% off the first year on Creative Cloud All Apps</h3>
+              <p>
+                Get up to 9 licences for your team at a lower price. See terms *
+              </p>
+            </div>
+
+            <div class="c">
+              <div class="heading">
+                <h3>Fast and free editing with Adobe Express</h3>
+              </div>
+              <div class="content">
+                <div class="section1">
+                  <h3>Simple image editing</h3>
+                  <p>Remove Background</p>
+                  <p>Resize images</p>
+                  <p>Crop images</p>
+                  <p>Convert to SVG</p>
+                </div>
+                <div class="section2">
+                  <h3>Quick video editing</h3>
+                  <p>Trim Videos</p>
+                  <p>Merge Videos</p>
+                  <p>Crop Videos</p>
+                  <p>Convert to GIF</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="card-bg d">
+              <h3>Creative Cloud All Apps</h3>
+              <p>The ultimate toolkit for unlimited creativity.</p>
+              <p>
+                Get 20+ apps, tutorials, templates, and more, plus generative AI
+                tools powered by Adobe Firefly.
+              </p>
+            </div>
+
+            <div class="card-sm e">
+              <h3>Adobe Illustrator, powered by Firefly.</h3>
+              <p>
+                Transform text prompts into editable vector graphics with Text
+                to Vector Graphic.
+              </p>
+            </div>
+
+            <div class="card-sm f">
+              <h3>Your imagination’s new best friend.</h3>
+              <p>
+                Use generative AI and simple text prompts to create the highest
+                quality output — beautiful images, text effects and fresh colour
+                palettes.
+              </p>
+            </div>
+
+            <div class="card-sm g">
+              <p><b>ADOBE GENSTUDIO</b></p>
+              <h3>Accelerate your marketing content.</h3>
+              <p>Plan, create, distribute, activate and measure content.</p>
+            </div>
+
+            <div class="card-sm h">
+              <p>STUDENTS AND TEACHERS</p>
+              <h3>Save over 60% on Creative Cloud.</h3>
+              <p>Go from standard to standout with 20+ amazing apps.</p>
+            </div>
+
+            <div style="font-size: 0.96rem; margin-top: 2rem">
+              *Available to new subscribers of Adobe Creative Cloud All Apps for
+              teams. Requires a 12-month commitment.<a style="color: blue"
+                >See terms.</a
+              >
+            </div>
+          </div>
+        </div>
+        <div class="last-section">
+          <div class="menu">
+            <div class="menu-column">
+              <div class="menu-section">
+                <div class="menu-section-head">Shop for</div>
+                <a href="">Creative Cloud</a><br />
+                <a href="">Photoshop</a><br />
+                <a href="">Adobe Express</a><br />
+                <a href="">Photography</a><br />
+                <a href="">Premiere Pro</a><br />
+                <a href="">Adobe Stock</a><br />
+                <a href="">Elements Family</a><br />
+                <a href="">Document Cloud</a><br />
+                <a href="">Acrobat</a><br />
+                <a href="">Acrobat Sign</a><br />
+                <a href="">Special Offers</a><br />
+                <a href="">View plans and pricing</a><br />
+                <a href="">View all products</a>
+              </div>
+            </div>
+            <div class="menu-column">
+              <div class="menu-section">
+                <div class="menu-section-head">For business</div>
+                <a href="">Cretive Cloud for business</a><br />
+                <a href="">Cretive Cloud for enterprise</a><br />
+                <a href="">Acrobat for Business</a>
+              </div>
+              <div class="menu-section">
+                <div class="menu-section-head">For education</div>
+                <a href="">Discounts for students and teachers</a><br />
+                <a href="">Schools and universities</a><br />
+                <a href="">Digital Learning Solutions</a>
+              </div>
+              <div class="menu-section">
+                <div class="menu-section-head">For mobile</div>
+                <a href="">Apps for iOS</a><br />
+                <a href="">Apps for Android</a><br />
+              </div>
+            </div>
+            <div class="menu-column">
+              <div class="menu-section">
+                <div class="menu-section-head">Experience Cloud</div>
+                <a href="">What is Experience Cloud?</a><br />
+                <a href="">Analytics</a><br />
+                <a href="">Experience Manager</a><br />
+                <a href="">Commerce</a><br />
+                <a href="">Marketo Engage</a><br />
+                <a href="">Workfront</a><br />
+                <a href="">Terms of Use</a><br />
+              </div>
+            </div>
+            <div class="menu-column">
+              <div class="menu-section">
+                <div class="menu-section-head">Support</div>
+                <a href="">Download and install</a><br />
+                <a href="">Help Centre</a><br />
+                <a href="">Adobe Support Community</a><br />
+                <a href="">Enterprise Support</a><br />
+                <a href="">Genuine software</a><br />
+              </div>
+              <div class="menu-section">
+                <div class="menu-section-head">Resources</div>
+                <a href="">Adobe Blog</a><br />
+                <a href="">Adobe Developer</a><br />
+              </div>
+              <div class="menu-section">
+                <div class="menu-section-head">Adobe Account</div>
+                <a href="">Log in to your account</a>
+              </div>
+            </div>
+            <div class="menu-column">
+              <div class="menu-section">
+                <div class="menu-section-head">Adobe</div>
+                <a href="">About</a><br />
+                <a href="">AI Overview</a><br />
+                <a href="">Careers</a><br />
+                <a href="">Newsroom</a><br />
+                <a href="">Corporate responsibility</a><br />
+                <a href="">Investor Relations</a><br />
+                <a href="">Supply chain</a><br />
+                <a href="">Trust Centre</a><br />
+                <a href="">Events</a><br />
+                <a href="">Diversity and inclusion</a><br />
+                <a href="">Integrity</a><br />
+              </div>
+            </div>
+          </div>
+          <div class="featured">
+            <span>Featured Products</span>
+            <div class="featured-item">
+              <img src="assets/images/featured-item1.png" />
+              <a href="">Adobe Acrobat Reader</a>
+            </div>
+            <div class="featured-item">
+              <img src="assets/images/featured-item2.png" />
+              <a href="">Adobe Express</a>
+            </div>
+            <div class="featured-item">
+              <img src="assets/images/featured-item3.png" />
+              <a href="">Photoshop</a>
+            </div>
+            <div class="featured-item">
+              <img src="assets/images/featured-item4.png" />
+              <a href="">Illustrator</a>
+            </div>
+          </div>
+          <div class="socials">
+            <div class="socials-a">
+              <div class="options">
+                <a href=""
+                  ><i class="fa-solid fa-globe"></i>&nbsp;&nbsp;
+                  <span style="font-size: 0.75rem">Change region</span></a
+                >
+              </div>
+              <div class="social"><i class="fa-brands fa-facebook"></i></div>
+              <div class="social">
+                <i class="fa-brands fa-square-instagram"></i>
+              </div>
+              <div class="social"><i class="fa-brands fa-x-twitter"></i></div>
+              <div class="social"><i class="fa-brands fa-linkedin"></i></div>
+            </div>
+
+            <div class="socials-b">
+              <span style="font-size: 0.75rem"
+                >Copyright 2024 All rights reserved.</span
+              >
+              <a href="">Privacy &nbsp;/</a>
+              <a href="">Terms of Use &nbsp;/</a>
+              <a href="">Cookie preferences &nbsp;/</a>
+              <a href="">Do not sell my personal information &nbsp; /</a>
+              <a href="">AdChoices</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>
+
+=== END:index.html ===
+
+=== FILE:style.css ===
+body {
+  margin: 0;
+  font-family: sans-serif;
+  background-color: white;
+  overflow: hidden;
+}
+
+.main {
+  overflow: auto;
+  height: 100vh;
+}
+
+h1 {
+  font-size: 2.25rem;
+  margin: 4.2rem 0 0.35rem 0;
+}
+
+h3 {
+  font-size: 1.35rem;
+  margin: 1.2rem 0 1.2rem 0;
+}
+
+p {
+  font-size: 1.1rem;
+  margin-bottom: 0.45rem;
+}
+
+.navbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  height: 4rem;
+  width: 100%;
+  background-color: white;
+}
+
+.ham-menu i {
+  font-size: 1.2rem;
+  opacity: 0.7;
+  margin: 0 0.7rem 0 1.5rem;
+  display: none;
+}
+
+.ham-menu-ls {
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  padding-top: 1rem;
+  top: 3rem;
+  height: 40rem;
+  width: 96%;
+  z-index: 10;
+  background-color: white;
+}
+
+.ham-menu-ls-item-ls {
+  height: auto;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  background-color: #fafafa;
+}
+
+.ham-menu-ls-item {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  align-items: center;
+  height: 2.7rem;
+  border-top: 1.55px solid #f3f3f3;
+}
+
+.ham-menu-ls-item-ls {
+  display: flex;
+  justify-content: center;
+}
+
+.ham-menu-ls-item-ls .menu-section-head {
+  display: flex;
+  height: 2.7rem;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 2.5px solid #f3f3f3;
+  border-top: 2.5px solid #f3f3f3;
+  margin-bottom: 0;
+}
+
+.ham-menu-ls-item-ls .menu-section-head span {
+  font-size: 0.8rem;
+  margin-left: 2rem;
+}
+
+.element-content {
+  height: auto;
+  font-size: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  margin: 1.8rem 0 1.4rem 2rem;
+}
+
+.element-content a {
+  color: black;
+  text-decoration: none;
+  font-size: 0.78rem;
+  padding: 0;
+}
+
+.nav-a {
+  display: flex;
+  width: fit-content;
+  justify-content: center;
+  align-items: center;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  height: 1.5rem;
+  width: 1.5rem;
+  color: #eb104a;
+  margin: 0 4.2rem 0 3rem;
+}
+
+.nav-btn {
+  height: 4rem;
+  width: fit-content;
+  font-size: 0.81rem;
+  border: none;
+  background-color: transparent;
+  padding-right: 0;
+  margin-left: 0.7rem;
+}
+
+.nav-btn-icon {
+  position: relative;
+  right: 0.3rem;
+}
+
+.nav-btn-a:hover {
+  background-color: #fafafa;
+  cursor: pointer;
+}
+
+.nav-b {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nav-b button {
+  height: 2.1rem;
+  width: fit-content;
+  font-size: 0.81rem;
+  font-weight: 550;
+  border-radius: 3rem;
+  border: 2px solid #e7e7e7;
+  background-color: transparent;
+  padding: 0 0.8rem;
+  margin: 0 2.7rem 0 0.9rem;
+}
+
+.nav-b button:hover {
+  background-color: #e9e9e9;
+}
+
+.top-section {
+  height: 46.5rem;
+  background: url("https://www.adobe.com/in/homepage/fragments/loggedout/row-custom-pods/intro-price/marquee/cc/media_148f2a129210332a5c2de11f946d81cde4a2d5d38.png?width=2000&format=webply&optimize=medium");
+  background-size: cover;
+}
+
+.nav-btn-dropdown .menu {
+  position: fixed;
+  top: 4rem;
+  background-color: #fafafa;
+  height: 30rem;
+  width: 100%;
+  padding: 2.4rem 2.4rem 1.8rem 2.4rem;
+  z-index: 20;
+}
+
+.nav-btn-dropdown .menu .menu-column {
+  justify-content: flex-start;
+}
+.nav-btn-dropdown .menu .menu-column .menu-section {
+  margin-bottom: 3rem;
+}
+
+.nav-btn-dropdown .menu .menu-column .menu-section .menu-section-head {
+  border-bottom: 0.3px solid #e1e1e1;
+  padding-bottom: 0.6rem;
+}
+
+.nav-btn-dropdown .first {
+  justify-content: space-around;
+  height: 31.5rem;
+}
+
+.nav-btn-dropdown .first .card2 {
+  height: 450px;
+  width: 270px;
+}
+
+.nav-btn-dropdown .first .card2 .image {
+  height: 210px;
+}
+
+.nav-btn-dropdown .first .card2 .image img {
+  height: 210px;
+  width: 270px;
+}
+
+.nav-btn-dropdown .first .card2 .text {
+  padding: 0.6rem 1.5rem;
+  text-align: left;
+  background-color: white;
+  height: 240px;
+  border: 0.3px solid #e1e1e1;
+}
+
+.nav-btn-dropdown .second {
+  justify-content: space-evenly;
+}
+
+.nav-btn-dropdown .second .card3 .text {
+  height: 144px;
+  width: 234px;
+  background-color: white;
+  border: 0.3px solid #e1e1e1;
+  text-align: left;
+  padding: 1.5rem;
+}
+
+.nav-btn-dropdown .third {
+  justify-content: space-evenly;
+  height: 27rem;
+}
+
+.nav-btn-dropdown .fourth {
+  justify-content: space-evenly;
+  height: 21rem;
+}
+
+.nav-btn-dropdown .fourth .menu-column .card {
+  height: 330px;
+  width: 255px;
+  background-color: black;
+}
+
+.image img {
+  height: 195px;
+  width: 255px;
+}
+
+.card .text {
+  display: flex;
+  justify-content: center;
+  text-align: left;
+  padding: 0.9rem 1.5rem;
+  color: white;
+  font-size: 0.84rem;
+}
+
+.toggle {
+  display: none;
+}
+
+.transform {
+  transform: rotate(180deg) translateY(-12px);
+}
+
+.transform2 {
+  transform: rotate(-180deg);
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  text-align: center;
+  align-items: center;
+  margin-bottom: 4.05rem;
+}
+
+.cards {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.card-bg {
+  width: 58%;
+  height: 27rem;
+  border: 2.4px solid white;
+  border-radius: 1.2rem;
+  margin-right: 1.5rem;
+  padding: 1.5rem;
+  background: url("https://www.adobe.com/in/homepage/fragments/loggedout/row-custom-pods/intro-price/marquee-brick/wide-brick/media_110790d2c721febffe1a8dfb54b9d36a09cece736.png?width=2000&format=webply&optimize=medium");
+  background-size: contain;
+  background-position-y: 100%;
+  background-repeat: no-repeat;
+  background-color: rgba(255, 255, 255, 0.3);
+}
+
+.card-sm {
+  width: 27%;
+  height: 27rem;
+  border: 2.4px solid white;
+  border-radius: 1.2rem;
+  margin-left: 0.6rem;
+  padding: 1.5rem;
+  background: url("https://www.adobe.com/in/homepage/fragments/loggedout/row-custom-pods/intro-price/marquee-brick/regular-brick/media_1729bef8e6f0d2055edfd5e177cb282ab0361b3da.png?width=2000&format=webply&optimize=medium");
+  background-size: contain;
+  background-position-y: 100%;
+  background-repeat: no-repeat;
+  background-color: rgba(255, 255, 255, 0.35);
+}
+
+.btn {
+  height: 2.4rem;
+  width: fit-content;
+  font-size: 1.05rem;
+  border-radius: 3rem;
+  border: 2.1px solid black;
+  padding: 0 0.8rem;
+  background-color: transparent;
+}
+
+.sm {
+  height: 1.95rem;
+  font-size: 0.96rem;
+  margin: 0 0.9rem 0 0;
+}
+
+.btn:hover {
+  background-color: black;
+  color: white;
+}
+
+.mid-section {
+  margin-bottom: 1.5rem;
+}
+
+.btn-list {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  margin: 2rem auto 2rem auto;
+}
+
+.btn-list-text {
+  font-size: 1.2rem;
+  margin: 0 1.08rem 1.08rem 0;
+}
+
+.btn-list-btns {
+  display: flex;
+  justify-content: center;
+}
+
+.card-section {
+  display: flex;
+  flex-wrap: wrap;
+  height: auto;
+  justify-content: space-evenly;
+}
+
+.card-section .card-sm {
+  width: 27%;
+  height: 28.5rem;
+  border: 0.8px solid white;
+  border-radius: 1.5rem;
+  margin: 0;
+  padding: 1.5rem;
+}
+
+.a {
+  background: url("https://www.adobe.com/in/homepage/fragments/loggedout/pods/cc/media_1a5febfff16a183c5859db02858f4642b266ff3e7.png?width=2000&format=webply&optimize=medium");
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position-y: 100%;
+  background-position-x: 100%;
+  background-color: #a4f7fb;
+}
+
+.b {
+  background: url("https://www.adobe.com/in/homepage/fragments/loggedout/row-custom-pods/intro-price/regular-pods/cc/media_173ba794fe431b08b7220b7ad15039e1e7a2109d0.png?width=2000&format=webply&optimize=medium");
+  background-size: cover;
+  background-position: center;
+}
+
+.c {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  width: 26%;
+  margin: 0 1.65rem 1.8rem 1.2rem;
+}
+
+.heading {
+  display: flex;
+  align-items: center;
+  height: 7.5rem;
+  width: 100%;
+  background-color: #d3045a;
+  color: white;
+  padding: 0 1.2rem 0 1.2rem;
+  border-top-left-radius: 1.5rem;
+  border-top-right-radius: 1.5rem;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  background-color: #ededed;
+  height: 24rem;
+  width: 100%;
+  padding: 0 1.2rem 0 1.2rem;
+  border-bottom-left-radius: 1.5rem;
+  border-bottom-right-radius: 1.5rem;
+}
+
+.content p {
+  font-size: 0.9rem;
+  margin-bottom: 0.75rem;
+}
+
+.content p:hover {
+  text-decoration: underline;
+}
+
+.d {
+  height: 28.5rem;
+  width: 61%;
+  margin: 0 0 1.6rem 0;
+  padding: 1.5rem 0 1.5rem 1.5rem;
+  background: url("https://www.adobe.com/in/homepage/fragments/loggedout/pods/cc/media_1a448adc114b2b13af3970608db817bf2bb0e81f9.png?width=2000&format=webply&optimize=medium");
+  background-size: cover;
+  background-position-x: 90%;
+}
+
+.e {
+  background: url("https://www.adobe.com/in/homepage/fragments/loggedout/pods/cc/media_11272b57d233ead640ca9405fde9e770757858e67.png?width=2000&format=webply&optimize=medium");
+  background-size: contain;
+  background-position-y: 100%;
+  background-position-x: 90%;
+  background-repeat: no-repeat;
+  background-color: #ff9c09;
+}
+
+.f {
+  background: url("https://www.adobe.com/in/homepage/fragments/loggedout/pods/cc/media_173a58b394d6891a3a5b330c0aabb457a50cc4717.png?width=2000&format=webply&optimize=medium");
+  background-size: cover;
+  background-position: center;
+}
+
+.g {
+  background: url("https://www.adobe.com/in/homepage/fragments/loggedout/pods/ec/media_18e07910e8e42ab9e160cbbec8ef982a190fe79ab.png?width=2000&format=webply&optimize=medium");
+  background-size: contain;
+  background-position-y: 100%;
+  background-repeat: no-repeat;
+  background-color: #5e53dd;
+  color: white;
+}
+
+.h {
+  background: url("https://www.adobe.com/in/homepage/fragments/loggedout/pods/edu/media_1e9208f578538b01de1c9a401dacc992a28066ae7.jpeg?width=2000&format=webply&optimize=medium");
+  background-size: contain;
+}
+
+.last-section {
+  height: 34.5rem;
+  background-color: #fafafa;
+  padding: 2.4rem 2.4rem 1.8rem 2.4rem;
+}
+
+.menu {
+  display: flex;
+  justify-content: space-between;
+  height: 75%;
+  margin-bottom: 1.5rem;
+}
+
+.menu-column {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.menu-section {
+  height: auto;
+  font-size: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.menu-section a {
+  color: black;
+  text-decoration: none;
+  font-size: 0.72rem;
+  padding: 0;
+}
+
+.menu-section a:hover {
+  color: blue;
+}
+
+.menu-section-head {
+  font-weight: 500;
+  margin-bottom: 1.05rem;
+}
+
+.featured {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 8%;
+  border-top: 1.8px solid #d6d6d6;
+  border-bottom: 1.8px solid #d6d6d6;
+  font-size: 0.9rem;
+}
+
+.featured-item {
+  display: flex;
+  align-items: center;
+  margin-left: 2.1rem;
+}
+
+.featured-item img {
+  height: 1.65rem;
+  width: 1.65rem;
+}
+
+.featured-item a {
+  color: black;
+  text-decoration: none;
+  font-size: 0.75rem;
+  padding: 0;
+  margin-left: 0.75rem;
+}
+
+.featured-item a:hover {
+  color: blue;
+}
+
+.socials {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 3.9rem;
+}
+
+.socials-a {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-top: 2.8rem;
+}
+
+.options a {
+  display: flex;
+  align-items: center;
+  color: black;
+  opacity: 0.8;
+  font-size: 1.35rem;
+  text-decoration: none;
+  padding: 0;
+}
+
+.options a:hover {
+  color: blue;
+}
+
+.social {
+  font-size: 1.5rem;
+  opacity: 0.6;
+  margin-left: 0.75rem;
+}
+
+.social:hover {
+  opacity: 0.5;
+}
+
+.socials-b {
+  display: flex;
+  align-items: center;
+  margin-top: 3rem;
+}
+
+.socials-b a {
+  color: black;
+  text-decoration: none;
+  font-size: 0.75rem;
+  padding: 0;
+  margin-left: 0.75rem;
+}
+
+.socials-b a:hover {
+  color: blue;
+}
+
+@media (max-width: 1200px) {
+  .logo {
+    margin-right: 0rem;
+    margin-left: 1rem;
+  }
+
+  .logo span {
+    display: none;
+  }
+
+  .nav-b button {
+    margin-right: 1rem;
+  }
+
+  h1 {
+    transform: scale(0.8);
+  }
+
+  .card-bg,
+  .card-sm {
+    width: 40%;
+  }
+
+  .btn-list-btns {
+    height: 5rem;
+    width: 25rem;
+    flex-wrap: wrap;
+  }
+
+  .card-section .card-sm {
+    width: 42%;
+    margin-bottom: 2rem;
+  }
+
+  .d {
+    width: 43%;
+  }
+
+  .c {
+    width: 42%;
+    margin-right: 1rem;
+  }
+}
+
+@media (max-width: 900px) {
+  .nav-a .nav-btn-a {
+    display: none;
+  }
+
+  .logo span,
+  .ham-menu i {
+    display: inline;
+  }
+
+  .ham-menu-ls-item {
+    display: flex;
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
+=== END:style.css ===
+"""
+
 eat_that_frog = """
 EAT THAT FROG!
 PAGE 1

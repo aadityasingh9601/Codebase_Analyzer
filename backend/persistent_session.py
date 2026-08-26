@@ -39,7 +39,9 @@ Usage:
 """
 
 import base64
+import io
 import os
+import types
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -188,6 +190,21 @@ class PersistentSession:
         # callback reference. It gets reconstructed by setup(). Saving it
         # could pickle a stale callback reference.
         repl_locals.pop("answer", None)
+
+        # Remove junk that shouldn't cross sessions:
+        # - open file handles (leftover `f` from add_context) would be dead on
+        #   restore and can trigger "'NoneType' object is not callable" if the
+        #   model tries to call them.
+        # - modules are re-imported on the client side anyway.
+        def _keep(name: str, value: Any) -> bool:
+            if isinstance(value, (io.TextIOBase, io.BufferedIOBase, io.RawIOBase)):
+                return False
+            if isinstance(value, types.ModuleType):
+                return False
+            # Skip any object that can't be resurrected safely
+            return True
+
+        repl_locals = {k: v for k, v in repl_locals.items() if _keep(k, v)}
 
         message_history = self._get_message_history()
 

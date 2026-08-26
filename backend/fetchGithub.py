@@ -114,19 +114,35 @@ def fetch_repo_as_structured_json(repo_url: str, github_token: str) -> dict:
     
     return structured
 
+def build_lightweight_context(codebase: dict) -> dict:
+    """Only metadata in initial context — no file contents"""
+    return {
+        "repo_name": codebase["repo_name"],
+        "description": codebase["description"],
+        "file_tree": codebase["file_tree"],
+        "files_metadata": {
+            path: {
+                "language": data["language"],
+                "size_lines": data["size_lines"],
+                "imports": data["imports"]
+                # NO content here
+            }
+            for path, data in codebase["files"].items()
+        }
+    }
+
 # "https://github.com/aadityasingh9601/Adobe-UI-clone"
 # "https://github.com/aadityasingh9601/Paytm"
 # "https://github.com/aadityasingh9601/ChatPdf"
 
-repo_url = "https://github.com/aadityasingh9601/Paytm"
+repo_url = "https://github.com/aadityasingh9601/paytm"
 
 codebase_data = fetch_repo_as_structured_json(repo_url, github_token)
 print(codebase_data)
 
 # Save
-with open("codebase_paytm.json", "w") as f:
-    json.dump(codebase_data, f, indent=2)
+with open(f"codebase_paytm_lightweight.json", "w") as f:
+    json.dump(build_lightweight_context(codebase_data), f, indent=2)
 
-# Load anywhere
-# with open("codebase_cache.json", "r") as f:
-#     CODEBASE_CONTENT = json.load(f)
+with open(f"codebase_paytm.json", "w") as f:
+    json.dump(codebase_data, f, indent=2)

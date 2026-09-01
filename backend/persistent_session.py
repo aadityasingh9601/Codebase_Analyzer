@@ -196,10 +196,28 @@ class PersistentSession:
         #   restore and can trigger "'NoneType' object is not callable" if the
         #   model tries to call them.
         # - modules are re-imported on the client side anyway.
+        def _is_picklable(value: Any) -> bool:
+            """Return True if dill can serialize the given value.
+
+            Some objects captured in the REPL namespace (e.g. a
+            rich.console.Console, which holds a threading.local
+            ConsoleThreadLocals) cannot be pickled. Such values would crash
+            dill.dump() at save time, so we drop them from the snapshot.
+            """
+            try:
+                dill.dumps(value)
+                return True
+            except Exception:
+                return False
+
         def _keep(name: str, value: Any) -> bool:
             if isinstance(value, (io.TextIOBase, io.BufferedIOBase, io.RawIOBase)):
                 return False
             if isinstance(value, types.ModuleType):
+                return False
+            # Skip anything that dill cannot serialize; it would only make the
+            # save fail and can often be recomputed on the client side anyway.
+            if not _is_picklable(value):
                 return False
             # Skip any object that can't be resurrected safely
             return True

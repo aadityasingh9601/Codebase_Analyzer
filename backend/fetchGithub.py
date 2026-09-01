@@ -135,14 +135,14 @@ def build_lightweight_context(codebase: dict) -> dict:
 # "https://github.com/aadityasingh9601/Paytm"
 # "https://github.com/aadityasingh9601/ChatPdf"
 
-repo_url = "https://github.com/aadityasingh9601/paytm"
+repo_url = "https://github.com/aadityasingh9601/Adobe-UI-clone"
 
 codebase_data = fetch_repo_as_structured_json(repo_url, github_token)
 print(codebase_data)
 
 # Save
-with open(f"codebase_paytm_lightweight.json", "w") as f:
+with open(f"codebase_abobe_lightweight.json", "w") as f:
     json.dump(build_lightweight_context(codebase_data), f, indent=2)
 
-with open(f"codebase_paytm.json", "w") as f:
+with open(f"codebase_adobe.json", "w") as f:
     json.dump(codebase_data, f, indent=2)

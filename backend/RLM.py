@@ -2,6 +2,7 @@ from rlm import RLM
 from persistent_session import PersistentSession
 from dotenv import load_dotenv
 import os
+from prompt import ROOT_PROMPT
 import json
 from colorama import Fore, Back, Style
 
@@ -61,34 +62,7 @@ def create_rlm() -> RLM:
     )
 
 
-ROOT_PROMPT = """
-You have access to a GitHub repository. The variable `context` holds metadata only.
 
-CONTEXT STRUCTURE (context is a dict):
-- context['repo_name'] — repository name
-- context['description'] — what the repo does
-- context['file_tree'] — list of all file paths
-- context['files_metadata'][path] — metadata per file:
-  - 'language' — programming language
-  - 'size_lines' — line count
-  - 'imports' — list of imported modules/files
-
-AVAILABLE FUNCTIONS (read actual code from disk on demand):
-- get_file_content(path) → returns full content of one file
-- get_multiple_files([path1, path2]) → returns dict of multiple files
-- search_files_by_keyword(keyword) → returns list of paths containing keyword
-
-STRICT WORKFLOW — follow this exact order:
-1. Explore context['file_tree'] to identify relevant files
-2. Use search_files_by_keyword(keyword) for broad searches
-3. Read specific files using get_file_content(path) — NEVER guess contents
-4. Follow dependency chains via context['files_metadata'][path]['imports']
-5. Cite exact file paths in every answer
-
-You are a codebase expert. Answer accurately based only on what you read.
-Never stop early — keep reading files until you have enough info to answer completely.
-Understand the provided codebase properly & get ready for answering questions on it.
-"""
 
 with open(LIGHTWEIGHT_JSON_PATH, "r") as f:
     lightweight_data = json.load(f)
@@ -141,15 +115,15 @@ print(f"Functions available: {[k for k in env.locals if callable(env.locals[k])]
 
 result = rlm.completion(
     prompt="",
-    root_prompt="Explain a bug that could exist in the error handling across this codebase.",
+    root_prompt="Give me a architecture diagram of the project.",
 )
-print("Response:", Fore.ORANGE + str(result.response))
+print("Response:", Fore.LIGHTYELLOW_EX + str(result.response))
 print("Execution time:", result.execution_time, "seconds")
 
-# Save session
-session = PersistentSession(rlm)
-session_path = session.save(user_id="user126_paytm", storage_path="./rlm_sessions")
-print(f"\nSession saved to: {session_path}")
+# # Save session
+# session = PersistentSession(rlm)
+# session_path = session.save(user_id="user126_paytm", storage_path="./rlm_sessions")
+# print(f"\nSession saved to: {session_path}")
 
 print(f"REPL variables: {[k for k in env.locals if not k.startswith('_')]}")
 

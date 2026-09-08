@@ -37,18 +37,20 @@ print(f"Size of FULL json file {json_file_size / 10**6} MB")
 json_file_size=os.stat(LIGHTWEIGHT_JSON_PATH).st_size
 print(f"Size of LIGHTWEIGHT json file {json_file_size / 10**6} MB")
 
-# You can also try with these LLM models.
-# minimax/minimax-m3:free           nvidia/nemotron-3-ultra-550b-a55b:free
+# You can also try with these LLM models. Choose a model with low latency.
+# nvidia/nemotron-3-ultra-550b-a55b:free (Very high latency)
+# minimax/minimax-m3:free (Not free anymore)
 # poolside/laguna-s-2.1:free
 # nvidia/nemotron-3.5-lightning:free
-# thinkingmachines/inkling:free
+# thinkingmachines/inkling:free (Can't use here, only for agentic harnesses)
+# inclusionai/ling-3.0-flash-fin:free
 
 def create_rlm() -> RLM:
     """Create a fresh RLM instance with standard config."""
     return RLM(
         backend="openrouter",
         backend_kwargs={
-            "model_name": "minimax/minimax-m3:free",
+            "model_name": "inclusionai/ling-3.0-flash-fin:free",
             "api_key": ai_api_key,
         },
         environment="local",
@@ -56,7 +58,7 @@ def create_rlm() -> RLM:
             "setup_code": SETUP_CODE,
         },
         max_depth=2,
-        max_iterations=25,
+        max_iterations=6,
         verbose=True,
         persistent=True,
     )

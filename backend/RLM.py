@@ -1,32 +1,19 @@
-from rlm import RLM
 from persistent_session import PersistentSession
 from dotenv import load_dotenv
 import os
 from prompt import ROOT_PROMPT
 import json
 from colorama import Fore, Back, Style
+from rlm_config import (
+    create_rlm,
+    SCRIPT_DIR,
+    FULL_JSON_PATH,
+    LIGHTWEIGHT_JSON_PATH,
+    SESSION_DIR,
+)
+from query_router import DEFAULT_MODEL, route_and_answer
 
 load_dotenv()
-
-ai_api_key: str = os.getenv("AI_API_KEY")
-
-# Resolve paths relative to this script's directory
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-FULL_JSON_PATH = os.path.join(SCRIPT_DIR, "codebase_paytm.json")
-LIGHTWEIGHT_JSON_PATH = os.path.join(SCRIPT_DIR, "codebase_paytm_lightweight.json")
-SESSION_DIR = os.path.join(SCRIPT_DIR, "rlm_sessions")
-
-# The helper functions (get_file_content, search_files_by_keyword, ...) live
-# in codebase_helpers.py. We inject them into the REPL via setup_code, so they
-# are re-defined on EVERY session (fresh and restored) — no need to persist them.
-# We prepend an absolute path for the full-codebase JSON because the REPL runs
-# code under a temp cwd and there is no __file__ inside exec().
-_CODEBASE_JSON_ABS = os.path.join(SCRIPT_DIR, "codebase_paytm.json")
-SETUP_CODE = (
-    f'_CODEBASE_JSON = r"{_CODEBASE_JSON_ABS}"\n'
-    + open(os.path.join(SCRIPT_DIR, "codebase_helpers.py")).read()
-    + "\n"
-)
 
 dill_file_size=os.stat("./rlm_sessions/user126_paytm.dill").st_size
 print(f"Size of already stored RLM session {dill_file_size / 10**6} MB")
@@ -44,26 +31,6 @@ print(f"Size of LIGHTWEIGHT json file {json_file_size / 10**6} MB")
 # nvidia/nemotron-3.5-lightning:free
 # thinkingmachines/inkling:free (Can't use here, only for agentic harnesses)
 # inclusionai/ling-3.0-flash-fin:free
-
-def create_rlm() -> RLM:
-    """Create a fresh RLM instance with standard config."""
-    return RLM(
-        backend="openrouter",
-        backend_kwargs={
-            "model_name": "inclusionai/ling-3.0-flash-fin:free",
-            "api_key": ai_api_key,
-        },
-        environment="local",
-        environment_kwargs={
-            "setup_code": SETUP_CODE,
-        },
-        max_depth=2,
-        max_iterations=6,
-        verbose=True,
-        persistent=True,
-    )
-
-
 
 
 with open(LIGHTWEIGHT_JSON_PATH, "r") as f:
@@ -94,6 +61,11 @@ print(f"Files in repo: {len(lightweight_data['file_tree'])}")
 # print("Execution time:", result.execution_time, "seconds")
 # print("Usage:", result.usage_summary.to_dict())
 
+# # Save session
+# session = PersistentSession(rlm)
+# session_path = session.save(user_id="user126_paytm", storage_path="./rlm_sessions")
+# print(f"\nSession saved to: {session_path}")
+
 # # Sanity-check what the REPL actually holds
 # env = rlm._persistent_env
 # print(f"context_0 type: {type(env.locals.get('context_0')).__name__}")
@@ -117,15 +89,12 @@ print(f"Functions available: {[k for k in env.locals if callable(env.locals[k])]
 
 result = rlm.completion(
     prompt="",
-    root_prompt="Give me a architecture diagram of the project.",
+    root_prompt="What does the file apps/bank-webhook/src/index.ts do?",
 )
 print("Response:", Fore.LIGHTYELLOW_EX + str(result.response))
 print("Execution time:", result.execution_time, "seconds")
 
-# # Save session
-# session = PersistentSession(rlm)
-# session_path = session.save(user_id="user126_paytm", storage_path="./rlm_sessions")
-# print(f"\nSession saved to: {session_path}")
+
 
 print(f"REPL variables: {[k for k in env.locals if not k.startswith('_')]}")
 

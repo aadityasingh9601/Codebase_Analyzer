@@ -89,12 +89,10 @@ print(f"Functions available: {[k for k in env.locals if callable(env.locals[k])]
 
 result = rlm.completion(
     prompt="",
-    root_prompt="What does the file apps/bank-webhook/src/index.ts do?",
+    root_prompt= "Print the file contents of auth.ts.",
 )
 print("Response:", Fore.LIGHTYELLOW_EX + str(result.response))
 print("Execution time:", result.execution_time, "seconds")
-
-
 
 print(f"REPL variables: {[k for k in env.locals if not k.startswith('_')]}")
 

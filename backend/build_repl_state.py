@@ -63,9 +63,10 @@ def build_repl_state_from_json(
     Args:
         lightweight_json: Path to the lightweight codebase JSON (metadata only,
             i.e. what the RLM stores in `context_0`).
-        root_prompt: The REBOOT/system instruction for the codebase. It is
-            embedded only so the state is self-describing if later referenced;
-            it does NOT trigger any LLM call here.
+        root_prompt: The ROOT/system instruction for the codebase. It is
+            stored in the .dill and restored on session.load() so the model
+            knows about the on-demand file helpers when queried. It does NOT
+            trigger any LLM call here.
         user_id: The session id used for the .dill file name (<user_id>.dill).
         storage_path: Directory where the .dill file is written.
 
@@ -90,6 +91,7 @@ def build_repl_state_from_json(
         history_count=0,      # no prior conversations
         compaction_history=[],
         message_history=[],   # no prior trajectory
+        root_prompt=root_prompt,
     )
 
     os.makedirs(storage_path, exist_ok=True)
@@ -113,8 +115,8 @@ def main():
     )
     parser.add_argument(
         "--root-prompt",
-        default="",
-        help="Optional root/system instruction embedded in the state.",
+        default=DEFAULT_ROOT_PROMPT,
+        help=f"ROOT/system instruction stored in the .dill (default: ROOT_PROMPT from prompt.py).",
     )
     parser.add_argument("--user", default=DEFAULT_USER_ID, help="Session id (dill filename).")
     parser.add_argument("--storage", default=DEFAULT_STORAGE_PATH, help="Output directory for the .dill.")

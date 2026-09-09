@@ -1,9 +1,14 @@
 """
 Patches the installed rlm library to support cross-session REPL persistence.
 
-Adds the `_skip_next_context_add` flag to RLM.__init__ and the context-skip
-check to _spawn_completion_context(), allowing PersistentSession to restore
-state without duplicating context.
+Adds:
+- The `_skip_next_context_add` flag to RLM.__init__ and the context-skip
+  check to _spawn_completion_context(), allowing PersistentSession to restore
+  state without duplicating context.
+- The `_persisted_root_prompt` flag and a `_merged_root_prompt()` helper so a
+  ROOT/system instruction restored from a saved session is merged into the
+  initial message of every completion() call — this is how the codebase
+  helpers instructions (get_file_content, etc.) reach the model at query time.
 
 Usage:
     python patch_rlm.py          # auto-detect venv and patch
@@ -63,6 +68,37 @@ FLAG_LINE = (
 # The anchor line in __init__ right before the flag should be inserted
 INIT_ANCHOR = "        self._persistent_env: SupportsPersistence | None = None"
 
+# The flag to initialize the persisted root prompt.
+ROOT_PROMPT_FLAG = (
+    "        # Persisted ROOT/system instruction restored from a saved session.\n"
+    "        # Merged into the initial message of each completion() by\n"
+    "        # _merged_root_prompt(). Set by PersistentSession.load_state().\n"
+    "        self._persisted_root_prompt = \"\"\n"
+)
+INIT_FLAG_ANCHOR = (
+    "        # context when restoring a previously saved REPL state.\n"
+    "        self._skip_next_context_add = False"
+)
+INIT_FLAG_LINE = "        self._persisted_root_prompt = \"\""
+
+# The method that merges persisted + per-call root prompts, inserted right
+# before RLM._setup_prompt.
+ROOT_MERGE_METHOD = (
+    "    def _merged_root_prompt(self, root_prompt: str | None = None) -> str | None:\n"
+    "        \"\"\"Merge the persisted ROOT/system instruction with the per-call root prompt.\"\"\"\n"
+    "        persisted = getattr(self, \"_persisted_root_prompt\", \"\") or \"\"\n"
+    "        if not persisted:\n"
+    "            return root_prompt\n"
+    "        if root_prompt:\n"
+    "            return f\"{persisted}\\n\\nThe user is asking: {root_prompt}\"\n"
+    "        return persisted\n"
+)
+SETUP_ANCHOR = "    def _setup_prompt("
+
+# In _setup_prompt, route root_prompt through the merge helper.
+ROOT_PROMPT_OLD = "            root_prompt=root_prompt,"
+ROOT_PROMPT_NEW = "            root_prompt=self._merged_root_prompt(root_prompt),"
+
 # The context-skip block to replace the direct add_context call
 OLD_CONTEXT_BLOCK = (
     "            environment.update_handler_address((lm_handler.host, lm_handler.port))\n"
@@ -78,13 +114,18 @@ NEW_CONTEXT_BLOCK = (
 
 
 def is_patched(content: str) -> bool:
-    """Check if the file already has both patches applied."""
-    return "_skip_next_context_add" in content and "if not self._skip_next_context_add:" in content
+    """Check if the file already has all patches applied."""
+    return (
+        "_skip_next_context_add" in content
+        and "if not self._skip_next_context_add:" in content
+        and INIT_FLAG_LINE in content
+        and "self._merged_root_prompt(root_prompt)" in content
+    )
 
 
 def apply_patch(content: str) -> str:
-    """Apply both patches to the file content."""
-    # 1. Insert the flag in __init__ after _persistent_env line
+    """Apply all patches to the file content."""
+    # 1. Insert the _skip_next_context_add flag in __init__ after _persistent_env line
     if "_skip_next_context_add" not in content:
         if INIT_ANCHOR not in content:
             raise ValueError(
@@ -96,21 +137,40 @@ def apply_patch(content: str) -> str:
             INIT_ANCHOR + "\n" + FLAG_LINE,
         )
 
+    # 1b. Insert the _persisted_root_prompt flag after _skip_next_context_add
+    if INIT_FLAG_LINE not in content:
+        _check_contains(content, INIT_FLAG_ANCHOR, "the _skip_next_context_add flag")
+        content = content.replace(INIT_FLAG_ANCHOR, INIT_FLAG_ANCHOR + "\n" + ROOT_PROMPT_FLAG)
+
     # 2. Replace the add_context block with the conditional version
     if "if not self._skip_next_context_add:" not in content:
-        if OLD_CONTEXT_BLOCK not in content:
-            raise ValueError(
-                "Could not find the add_context block in rlm.py. "
-                "The rlm library version may have changed. Manual patching required."
-            )
+        _check_contains(content, OLD_CONTEXT_BLOCK, "the add_context block")
         content = content.replace(OLD_CONTEXT_BLOCK, NEW_CONTEXT_BLOCK)
+
+    # 3. Insert the _merged_root_prompt method before _setup_prompt
+    if "def _merged_root_prompt" not in content:
+        _check_contains(content, SETUP_ANCHOR, "the _setup_prompt method")
+        content = content.replace(SETUP_ANCHOR, ROOT_MERGE_METHOD + SETUP_ANCHOR)
+
+    # 4. Route root_prompt through the merge helper in _setup_prompt
+    if ROOT_PROMPT_NEW not in content:
+        _check_contains(content, ROOT_PROMPT_OLD, "the root_prompt call in _setup_prompt")
+        content = content.replace(ROOT_PROMPT_OLD, ROOT_PROMPT_NEW)
 
     return content
 
 
+def _check_contains(content: str, needle: str, label: str) -> None:
+    if needle not in content:
+        raise ValueError(
+            f"Could not find {label} in rlm.py:\n  {needle!r}\n"
+            "The rlm library version may have changed. Manual patching required."
+        )
+
+
 def revert_patch(content: str) -> str:
-    """Revert both patches from the file content."""
-    # Remove the flag block (4 comment lines + 1 assignment line)
+    """Revert all patches from the file content."""
+    # Remove the _skip_next_context_add flag block (4 comment lines + 1 assignment line)
     flag_block_pattern = (
         r"        # Flag to skip adding context on the next completion\(\) call\.\n"
         r"        # Used by PersistentSession\.load_state\(\) to prevent duplicating\n"
@@ -118,8 +178,29 @@ def revert_patch(content: str) -> str:
         r"        self\._skip_next_context_add = False\n"
     )
     content = re.sub(flag_block_pattern, "", content)
+
+    # Remove the _persisted_root_prompt flag block (4 comment lines + 1 assignment line)
+    root_prompt_flag_pattern = (
+        r"        # Persisted ROOT/system instruction restored from a saved session\.\n"
+        r"        # Merged into the initial message of each completion\(\) by\n"
+        r"        # _merged_root_prompt\(\)\. Set by PersistentSession\.load_state\(\)\.\n"
+        r"        self\._persisted_root_prompt = \"\"\n"
+    )
+    content = re.sub(root_prompt_flag_pattern, "", content)
+
+    # Remove the _merged_root_prompt method (inserted right before _setup_prompt)
+    content = re.sub(
+        r"    def _merged_root_prompt\(self, root_prompt: str \| None = None\) -> str \| None:"
+        r".*?\n\n    def _setup_prompt\(",
+        "    def _setup_prompt(",
+        content,
+        flags=re.DOTALL,
+    )
+
     # Revert the conditional block back to direct call
     content = content.replace(NEW_CONTEXT_BLOCK, OLD_CONTEXT_BLOCK)
+    # Restore the direct root_prompt call
+    content = content.replace(ROOT_PROMPT_NEW, ROOT_PROMPT_OLD)
     return content
 
 

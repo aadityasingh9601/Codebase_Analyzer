@@ -62,12 +62,16 @@ class SessionState:
             completion() — [system, metadata, user_0, assistant_0, repl_0, ...].
             This is what gets passed to the LM on each iteration, so restoring
             it means the model can continue from where it left off.
+        root_prompt: The ROOT/system instruction for the codebase (e.g. the
+            REPO_PROMPT describing helpers like get_file_content). Restored at
+            query time so the model knows how to access file contents on demand.
     """
     repl_namespace: dict[str, Any]
     context_count: int = 0
     history_count: int = 0
     compaction_history: list[Any] = field(default_factory=list)
     message_history: list[dict[str, Any]] = field(default_factory=list)
+    root_prompt: str = ""
 
 
 class PersistentSession:
@@ -232,6 +236,11 @@ class PersistentSession:
             history_count=env._history_count,
             compaction_history=list(getattr(env, "_compaction_history", [])),
             message_history=message_history,
+            root_prompt=(
+                getattr(self.rlm, "_persisted_root_prompt", "")
+                or env.locals.get("root_prompt", "")
+                or ""
+            ),
         )
 
     def load_state(self, state: SessionState) -> None:
@@ -284,7 +293,16 @@ class PersistentSession:
             env.locals["history"] = env.locals["history_0"]
             env._history_count = max(env._history_count, 1)
 
-        # 3. Set the flag so the next completion() does NOT re-add the
+        # 3. Restore the ROOT/system prompt. PersistentSession consumers can
+        #    read rlm._persisted_root_prompt (or env.locals["root_prompt"]) so
+        #    the RLM embeds it in the initial message of each completion() —
+        #    see the _merged_root_prompt patch in patch_rlm.py.
+        state_root_prompt = getattr(state, "root_prompt", "") or ""
+        self.rlm._persisted_root_prompt = state_root_prompt
+        if state_root_prompt:
+            env.locals["root_prompt"] = state_root_prompt
+
+        # 4. Set the flag so the next completion() does NOT re-add the
         #    context as a new entry (which would duplicate context_0).
         #    This flag is checked in RLM._spawn_completion_context().
         self.rlm._skip_next_context_add = True

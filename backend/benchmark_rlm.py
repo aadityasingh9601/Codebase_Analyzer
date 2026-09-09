@@ -20,7 +20,7 @@ RESULTS_FILE = os.path.join(
 
 # Add your evaluation questions here.
 QUESTIONS = [
-    "What does apps/user-app/app/lib/auth.ts do?",
+    "Print the file contents of auth.ts.",
 ]
 
 

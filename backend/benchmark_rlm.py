@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 from datetime import datetime
@@ -6,59 +7,29 @@ from colorama import Fore
 from dotenv import load_dotenv
 
 from persistent_session import PersistentSession
-from rlm import RLM
+from query_router import DEFAULT_MODEL, route_and_answer
 from rlm.logger import RLMLogger
+from rlm_config import SCRIPT_DIR, SESSION_DIR, create_rlm
 
 load_dotenv()
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-SESSION_DIR = os.path.join(SCRIPT_DIR, "rlm_sessions")
 RESULTS_FILE = os.path.join(
     SCRIPT_DIR,
     f"rlm_benchmark_results_{datetime.now():%Y%m%d_%H%M%S}.json",
 )
 
-ai_api_key: str = os.getenv("AI_API_KEY")
-
 # Add your evaluation questions here.
 QUESTIONS = [
-    "How many files are there in the repository?",
-    "What's the tech stack of this repository?"
+    "What does apps/user-app/app/lib/auth.ts do?",
 ]
 
-_CODEBASE_JSON_ABS = os.path.join(SCRIPT_DIR, "codebase_paytm.json")
-SETUP_CODE = (
-    f'_CODEBASE_JSON = r"{_CODEBASE_JSON_ABS}"\n'
-    + open(os.path.join(SCRIPT_DIR, "codebase_helpers.py")).read()
-    + "\n"
-)
 
-
-def create_rlm() -> RLM:
-    return RLM(
-        backend="openrouter",
-        backend_kwargs={
-            "model_name": "inclusionai/ling-3.0-flash-fin:free",
-            "api_key": ai_api_key,
-        },
-        environment="local",
-        environment_kwargs={
-            "setup_code": SETUP_CODE,
-        },
-        logger=RLMLogger(),
-        max_depth=2,
-        max_iterations=6,
-        verbose=True,
-        persistent=True,
-    )
-
-
-def write_results(results: list[dict]) -> None:
+def write_results(results: list[dict], questions: list[str]) -> None:
     payload = {
         "run_metadata": {
             "generated_at": datetime.now().isoformat(),
             "model": results[0]["model"] if results else None,
-            "total_queries": len(QUESTIONS),
+            "total_queries": len(questions),
         },
         "results": results,
     }
@@ -73,8 +44,70 @@ def prompt_comment() -> str:
         return ""
 
 
-def run_benchmark() -> None:
-    rlm = create_rlm()
+def flatten_metrics(
+    result,
+    mode: str,
+) -> dict:
+    metrics = {
+        "execution_time_seconds": (
+            result.execution_time if mode == "rlm" else result.elapsed_seconds
+        ),
+    }
+    if mode == "rlm":
+        iterations = 0
+        if result.metadata:
+            iterations = len(result.metadata.get("iterations", []))
+        metrics["iterations"] = iterations
+        metrics["input_tokens"] = result.usage_summary.total_input_tokens
+        metrics["output_tokens"] = result.usage_summary.total_output_tokens
+    else:
+        metrics["tier"] = result.tier
+        metrics["reason"] = result.reason
+        metrics["answer_source"] = result.answer_source
+        metrics["evidence_paths"] = result.evidence_paths
+        metrics["direct_calls"] = result.direct_calls
+        metrics["direct_input_tokens"] = result.direct_input_tokens
+        metrics["direct_output_tokens"] = result.direct_output_tokens
+        metrics["input_tokens"] = (
+            result.direct_input_tokens + result.rlm_input_tokens
+        )
+        metrics["output_tokens"] = (
+            result.direct_output_tokens + result.rlm_output_tokens
+        )
+        metrics["rlm_input_tokens"] = result.rlm_input_tokens
+        metrics["rlm_output_tokens"] = result.rlm_output_tokens
+        metrics["rlm_iterations"] = result.rlm_iterations
+    return metrics
+
+
+def print_metrics(metrics: dict, mode: str) -> None:
+    print("-" * 70)
+    if mode == "rlm":
+        print(
+            f"Iterations: {metrics['iterations']} | "
+            f"Time: {metrics['execution_time_seconds']:.2f}s | "
+            f"Input tokens: {metrics['input_tokens']} | "
+            f"Output tokens: {metrics['output_tokens']}"
+        )
+    else:
+        print(
+            f"Tier: {metrics['tier']} | "
+            f"Source: {metrics['answer_source']} | "
+            f"Time: {metrics['execution_time_seconds']:.2f}s"
+        )
+        print(
+            f"Direct calls: {metrics['direct_calls']} | "
+            f"Direct in/out: {metrics['direct_input_tokens']}/{metrics['direct_output_tokens']}"
+        )
+        if metrics.get("rlm_iterations"):
+            print(
+                f"RLM in/out: {metrics['rlm_input_tokens']}/{metrics['rlm_output_tokens']} | "
+                f"RLM iterations: {metrics['rlm_iterations']}"
+            )
+
+
+def run_benchmark(mode: str) -> None:
+    rlm = create_rlm(logger=RLMLogger())
     session = PersistentSession(rlm)
     session.load(user_id="user126_paytm", storage_path=SESSION_DIR)
 
@@ -87,9 +120,20 @@ def run_benchmark() -> None:
             print("=" * 70)
 
             try:
-                result = rlm.completion(prompt="", root_prompt=question)
+                if mode == "rlm":
+                    result = rlm.completion(prompt="", root_prompt=question)
+                    response = result.response
+                    model = result.root_model
+                    metrics = flatten_metrics(result, mode)
+                else:
+                    result = route_and_answer(question, rlm=rlm)
+                    response = result.answer
+                    model = DEFAULT_MODEL
+                    metrics = flatten_metrics(result, mode)
+                    if result.error:
+                        print(Fore.RED + f"Router error: {result.error}")
             except Exception as exc:
-                print(Fore.RED + f"RLM call failed: {exc}")
+                print(Fore.RED + f"{mode} call failed: {exc}")
                 entry = {
                     "question": question,
                     "response": None,
@@ -98,46 +142,40 @@ def run_benchmark() -> None:
                     "metrics": None,
                 }
                 results.append(entry)
-                write_results(results)
+                write_results(results, QUESTIONS)
                 continue
 
-            iterations = 0
-            if result.metadata:
-                iterations = len(result.metadata.get("iterations", []))
-            metrics = {
-                "iterations": iterations,
-                "execution_time_seconds": result.execution_time,
-                "input_tokens": result.usage_summary.total_input_tokens,
-                "output_tokens": result.usage_summary.total_output_tokens,
-            }
-
-            print(Fore.LIGHTYELLOW_EX + str(result.response))
-            print("-" * 70)
-            print(
-                f"Iterations: {metrics['iterations']} | "
-                f"Time: {metrics['execution_time_seconds']:.2f}s | "
-                f"Input tokens: {metrics['input_tokens']} | "
-                f"Output tokens: {metrics['output_tokens']}"
-            )
+            print(Fore.LIGHTYELLOW_EX + str(response))
+            print_metrics(metrics, mode)
             comment = prompt_comment()
 
             entry = {
                 "question": question,
-                "response": result.response,
+                "response": response,
                 "comment": comment,
-                "model": result.root_model,
+                "model": model,
                 "metrics": metrics,
                 "completed_at": datetime.now().isoformat(),
             }
             results.append(entry)
-            write_results(results)
+            write_results(results, QUESTIONS)
     finally:
         rlm.close()
 
     print("=" * 70)
-    print(f"Benchmark complete. Results saved to: {RESULTS_FILE}")
+    print(f"Benchmark complete ({mode} mode). Results saved to: {RESULTS_FILE}")
     print("=" * 70)
 
 
 if __name__ == "__main__":
-    run_benchmark()
+    parser = argparse.ArgumentParser(
+        description="Benchmark question answering against the codebase."
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["rlm", "router"],
+        default="rlm",
+        help="'rlm' runs the full RLM; 'router' runs the tiered router.",
+    )
+    args = parser.parse_args()
+    run_benchmark(args.mode)

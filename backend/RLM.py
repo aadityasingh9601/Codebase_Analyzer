@@ -89,7 +89,7 @@ print(f"Functions available: {[k for k in env.locals if callable(env.locals[k])]
 
 result = rlm.completion(
     prompt="",
-    root_prompt= "Print the file contents of auth.ts.",
+    root_prompt= "Give me a flow chart of how it's working",
 )
 print("Response:", Fore.LIGHTYELLOW_EX + str(result.response))
 print("Execution time:", result.execution_time, "seconds")

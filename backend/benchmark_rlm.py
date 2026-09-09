@@ -20,7 +20,12 @@ RESULTS_FILE = os.path.join(
 
 # Add your evaluation questions here.
 QUESTIONS = [
-    "Print the file contents of auth.ts.",
+    "Print the file contents of apps/user-app/components/AccountForm.tsx.",
+    "How many files are there in this repo?",
+    "What's the tech stack of this application?",
+    "List all the package.json files in this repo.",
+    "Give me a flow chart of how it's working",
+    "Draw me the dependency graph between the main modules — which files depend on which?"
 ]
 
 

@@ -1,3 +1,4 @@
+
 import os
 
 from dotenv import load_dotenv
@@ -36,6 +37,10 @@ def create_rlm(logger=None, model_name: str = "inclusionai/ling-3.0-flash-fin:fr
         logger=logger,
         max_depth=2,
         max_iterations=8,
+        max_errors=3,
+        max_timeout=240,
+        max_tokens=200_000,
+        sampling_args={"temperature": 0.2},
         verbose=True,
         persistent=True,
     )

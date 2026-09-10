@@ -1,6 +1,7 @@
 from persistent_session import PersistentSession
 from dotenv import load_dotenv
 import os
+import sys
 from prompt import ROOT_PROMPT
 import json
 from colorama import Fore, Back, Style
@@ -87,13 +88,17 @@ env = rlm._persistent_env
 print(f"context_0 type: {type(env.locals.get('context_0')).__name__}")
 print(f"Functions available: {[k for k in env.locals if callable(env.locals[k])]}")
 
-result = rlm.completion(
-    prompt="",
-    root_prompt= "Give me a flow chart of how it's working",
-)
-print("Response:", Fore.LIGHTYELLOW_EX + str(result.response))
-print("Execution time:", result.execution_time, "seconds")
+question = " ".join(sys.argv[1:]) or "List down the contents of all the .css files in this repo."
 
-print(f"REPL variables: {[k for k in env.locals if not k.startswith('_')]}")
-
-rlm.close()
+try:
+    result = rlm.completion(
+        prompt="",
+        root_prompt=question,
+    )
+    print("Response:", Fore.LIGHTYELLOW_EX + str(result.response))
+    print("Execution time:", result.execution_time, "seconds")
+except Exception as exc:
+    print(Fore.RED + f"\nRLM call failed: {exc}")
+finally:
+    print(f"REPL variables: {[k for k in env.locals if not k.startswith('_')]}")
+    rlm.close()

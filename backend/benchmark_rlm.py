@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import re
 from datetime import datetime
 
 from colorama import Fore
@@ -20,13 +21,34 @@ RESULTS_FILE = os.path.join(
 
 # Add your evaluation questions here.
 QUESTIONS = [
-    "Print the file contents of apps/user-app/components/AccountForm.tsx.",
     "How many files are there in this repo?",
+    "Print the file contents of apps/user-app/components/AccountForm.tsx.",
+    "Print the file contents of apps/bank-webhook/src/index.ts.",
+    "Which file provides the bank webhook endpoint, and what does it import?",
     "What's the tech stack of this application?",
-    "List all the package.json files in this repo.",
-    "Give me a flow chart of how it's working",
-    "Draw me the dependency graph between the main modules — which files depend on which?"
 ]
+
+# Heuristic for detecting answers where the model never actually read the file.
+_COMPLAINT_RE = re.compile(
+    r"\bcontext is empty\b"
+    r"|(i can't|i cannot|i could n?ot|i am unable to)\b"
+    r".{0,80}(access|see|view|read|retrieve).{0,80}(the )?(actual )?file (contents?|content)\b"
+    r"|\b(no|don'?t have) .{0,40}(file )?(contents?|content)\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _question_succeeded(response, error) -> bool:
+    """True when a usable answer (not a complaint / crash) came back."""
+    if error:
+        return False
+    if not response or not str(response).strip():
+        return False
+    if str(response).strip().lower() == "none":
+        return False
+    if _COMPLAINT_RE.search(str(response)):
+        return False
+    return True
 
 
 def write_results(results: list[dict], questions: list[str]) -> None:
@@ -52,6 +74,7 @@ def prompt_comment() -> str:
 def flatten_metrics(
     result,
     mode: str,
+    max_iterations: int | None = None,
 ) -> dict:
     metrics = {
         "execution_time_seconds": (
@@ -65,6 +88,9 @@ def flatten_metrics(
         metrics["iterations"] = iterations
         metrics["input_tokens"] = result.usage_summary.total_input_tokens
         metrics["output_tokens"] = result.usage_summary.total_output_tokens
+        metrics["exhausted"] = (
+            max_iterations is not None and iterations >= max_iterations
+        )
     else:
         metrics["tier"] = result.tier
         metrics["reason"] = result.reason
@@ -82,6 +108,11 @@ def flatten_metrics(
         metrics["rlm_input_tokens"] = result.rlm_input_tokens
         metrics["rlm_output_tokens"] = result.rlm_output_tokens
         metrics["rlm_iterations"] = result.rlm_iterations
+        metrics["exhausted"] = (
+            result.rlm_iterations is not None
+            and max_iterations is not None
+            and result.rlm_iterations >= max_iterations
+        )
     return metrics
 
 
@@ -92,13 +123,15 @@ def print_metrics(metrics: dict, mode: str) -> None:
             f"Iterations: {metrics['iterations']} | "
             f"Time: {metrics['execution_time_seconds']:.2f}s | "
             f"Input tokens: {metrics['input_tokens']} | "
-            f"Output tokens: {metrics['output_tokens']}"
+            f"Output tokens: {metrics['output_tokens']} | "
+            f"Exhausted: {metrics['exhausted']}"
         )
     else:
         print(
             f"Tier: {metrics['tier']} | "
             f"Source: {metrics['answer_source']} | "
-            f"Time: {metrics['execution_time_seconds']:.2f}s"
+            f"Time: {metrics['execution_time_seconds']:.2f}s | "
+            f"Exhausted: {metrics['exhausted']}"
         )
         print(
             f"Direct calls: {metrics['direct_calls']} | "
@@ -111,17 +144,19 @@ def print_metrics(metrics: dict, mode: str) -> None:
             )
 
 
-def run_benchmark(mode: str) -> None:
+def run_benchmark(mode: str, questions: list[str] | None = None) -> None:
     rlm = create_rlm(logger=RLMLogger())
     session = PersistentSession(rlm)
     session.load(user_id="user126_paytm", storage_path=SESSION_DIR)
+    max_iterations = rlm.max_iterations
 
+    questions = questions or QUESTIONS
     results: list[dict] = []
 
     try:
-        for index, question in enumerate(QUESTIONS, start=1):
+        for index, question in enumerate(questions, start=1):
             print("=" * 70)
-            print(f"[{index}/{len(QUESTIONS)}] Question: {question}")
+            print(f"[{index}/{len(questions)}] Question: {question}")
             print("=" * 70)
 
             try:
@@ -129,12 +164,12 @@ def run_benchmark(mode: str) -> None:
                     result = rlm.completion(prompt="", root_prompt=question)
                     response = result.response
                     model = result.root_model
-                    metrics = flatten_metrics(result, mode)
+                    metrics = flatten_metrics(result, mode, max_iterations=max_iterations)
                 else:
                     result = route_and_answer(question, rlm=rlm)
                     response = result.answer
                     model = DEFAULT_MODEL
-                    metrics = flatten_metrics(result, mode)
+                    metrics = flatten_metrics(result, mode, max_iterations=max_iterations)
                     if result.error:
                         print(Fore.RED + f"Router error: {result.error}")
             except Exception as exc:
@@ -144,14 +179,19 @@ def run_benchmark(mode: str) -> None:
                     "response": None,
                     "comment": None,
                     "error": str(exc),
+                    "success": False,
                     "metrics": None,
+                    "completed_at": datetime.now().isoformat(),
                 }
                 results.append(entry)
-                write_results(results, QUESTIONS)
+                write_results(results, questions)
                 continue
 
+            success = _question_succeeded(response, None)
+            metrics["success"] = success
             print(Fore.LIGHTYELLOW_EX + str(response))
             print_metrics(metrics, mode)
+            print(f"Success: {success}")
             comment = prompt_comment()
 
             entry = {
@@ -159,17 +199,39 @@ def run_benchmark(mode: str) -> None:
                 "response": response,
                 "comment": comment,
                 "model": model,
+                "success": success,
                 "metrics": metrics,
                 "completed_at": datetime.now().isoformat(),
             }
             results.append(entry)
-            write_results(results, QUESTIONS)
+            write_results(results, questions)
     finally:
         rlm.close()
 
+    _print_summary(results, mode)
     print("=" * 70)
     print(f"Benchmark complete ({mode} mode). Results saved to: {RESULTS_FILE}")
     print("=" * 70)
+
+
+def _print_summary(results: list[dict], mode: str) -> None:
+    valid = [r for r in results if r.get("metrics")]
+    if not valid:
+        return
+    n = len(valid)
+    successes = sum(1 for r in valid if r.get("success"))
+    avg_iters = sum(r["metrics"].get("iterations") or 0 for r in valid) / n
+    avg_in = sum(r["metrics"].get("input_tokens") or 0 for r in valid) / n
+    avg_out = sum(r["metrics"].get("output_tokens") or 0 for r in valid) / n
+    avg_time = sum(r["metrics"].get("execution_time_seconds") or 0 for r in valid) / n
+    exhausted = sum(1 for r in valid if r["metrics"].get("exhausted"))
+    print("=" * 70)
+    print(f"Summary ({mode} mode, {n} questions):")
+    print(f"  Success rate : {successes}/{n} ({100 * successes / n:.0f}%)")
+    print(f"  Avg iterations : {avg_iters:.1f} | Exhausted: {exhausted}/{n}")
+    print(f"  Avg input tokens  : {avg_in:,.0f}")
+    print(f"  Avg output tokens : {avg_out:,.0f}")
+    print(f"  Avg time          : {avg_time:.1f}s")
 
 
 if __name__ == "__main__":
@@ -182,5 +244,10 @@ if __name__ == "__main__":
         default="rlm",
         help="'rlm' runs the full RLM; 'router' runs the tiered router.",
     )
+    parser.add_argument(
+        "--questions",
+        nargs="+",
+        help="Override the QUESTIONS list with one or more questions.",
+    )
     args = parser.parse_args()
-    run_benchmark(args.mode)
+    run_benchmark(args.mode, questions=args.questions)

@@ -1,7 +1,7 @@
 """
 Patches the installed rlm library to support cross-session REPL persistence.
 
-Adds:
+rlm/core/rlm.py:
 - The `_skip_next_context_add` flag to RLM.__init__ and the context-skip
   check to _spawn_completion_context(), allowing PersistentSession to restore
   state without duplicating context.
@@ -9,6 +9,11 @@ Adds:
   ROOT/system instruction restored from a saved session is merged into the
   initial message of every completion() call — this is how the codebase
   helpers instructions (get_file_content, etc.) reach the model at query time.
+
+rlm/utils/prompts.py:
+- A deadline nudge appended to the per-turn "Turn i/N:" prompt when only 1-2
+  turns remain, forcing the model to submit its best-supported answer instead
+  of exhausting the turn budget unsubmitted.
 
 Usage:
     python patch_rlm.py          # auto-detect venv and patch
@@ -111,6 +116,52 @@ NEW_CONTEXT_BLOCK = (
     "            else:\n"
     "                self._skip_next_context_add = False"
 )
+
+# ---------- Deadline nudge (rlm/utils/prompts.py) ----------
+
+# Sentinel inserted into build_user_prompt so is_patched() has a unique marker.
+NUDGE_SENTINEL = "TURN BUDGET WARNING"
+# The exact return statement that terminates build_user_prompt.
+NUDGE_OLD = '    return {"role": "user", "content": prompt}\n'
+NUDGE_NEW = (
+    "    if max_iterations - iteration <= 2:\n"
+    "        upcoming = max_iterations - iteration\n"
+    "        prompt += (\n"
+    '            f"\\n\\nTURN BUDGET WARNING - only {upcoming} turn(s) remain. "\n'
+    '            "If you have an answer, submit it now: set answer[\\"content\\"] and "\n'
+    '            "answer[\\"ready\\"] = True in a ```repl block. "\n'
+    '            "Otherwise submit your best-supported answer based on what you have read so far."\n'
+    "        )\n"
+    '    return {"role": "user", "content": prompt}\n'
+)
+
+
+def find_rlm_prompts_py(rlm_path: Path) -> Path:
+    """rlm/utils/prompts.py sits alongside rlm/core/rlm.py in the same install."""
+    prompts = rlm_path.parent.parent / "utils" / "prompts.py"
+    if not prompts.exists():
+        raise FileNotFoundError(f"Could not find rlm/utils/prompts.py near {rlm_path}")
+    return prompts
+
+
+def is_prompts_patched(content: str) -> bool:
+    """Check if build_user_prompt has the deadline nudge."""
+    return NUDGE_SENTINEL in content
+
+
+def apply_prompts_patch(content: str) -> str:
+    """Insert the deadline nudge before the end of build_user_prompt."""
+    if is_prompts_patched(content):
+        return content
+    _check_contains(content, NUDGE_OLD, "the build_user_prompt return statement")
+    return content.replace(NUDGE_OLD, NUDGE_NEW)
+
+
+def revert_prompts_patch(content: str) -> str:
+    """Remove the deadline nudge from build_user_prompt."""
+    if not is_prompts_patched(content):
+        return content
+    return content.replace(NUDGE_NEW, NUDGE_OLD)
 
 
 def is_patched(content: str) -> bool:
@@ -223,40 +274,52 @@ def main():
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
 
-    print(f"Found: {rlm_path}")
-
-    content = rlm_path.read_text()
-
-    if args.check:
-        if is_patched(content):
-            print("Already patched.")
-        else:
-            print("Not patched.")
-        return
-
-    if args.unpatch:
-        if not is_patched(content):
-            print("Not patched — nothing to revert.")
-            return
-        new_content = revert_patch(content)
-        rlm_path.write_text(new_content)
-        print("Patch reverted successfully.")
-        return
-
-    # Apply patch
-    if is_patched(content):
-        print("Already patched — nothing to do.")
-        return
-
     try:
-        new_content = apply_patch(content)
-    except ValueError as e:
+        prompts_path = find_rlm_prompts_py(rlm_path)
+    except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    rlm_path.write_text(new_content)
-    print("Patch applied successfully.")
-    print("The rlm library now supports _skip_next_context_add for cross-session persistence.")
+    print(f"Found: {rlm_path}")
+    print(f"Found: {prompts_path}")
+
+    rlm_content = rlm_path.read_text()
+    prompts_content = prompts_path.read_text()
+
+    if args.check:
+        print("rlm/core/rlm.py       :", "Already patched." if is_patched(rlm_content) else "Not patched.")
+        print("rlm/utils/prompts.py  :", "Already patched." if is_prompts_patched(prompts_content) else "Not patched.")
+        return
+
+    if args.unpatch:
+        if is_patched(rlm_content):
+            rlm_path.write_text(revert_patch(rlm_content))
+            print("rlm/core/rlm.py patch reverted successfully.")
+        else:
+            print("rlm/core/rlm.py: not patched — nothing to revert.")
+        if is_prompts_patched(prompts_content):
+            prompts_path.write_text(revert_prompts_patch(prompts_content))
+            print("rlm/utils/prompts.py patch reverted successfully.")
+        else:
+            print("rlm/utils/prompts.py: not patched — nothing to revert.")
+        return
+
+    if is_patched(rlm_content):
+        print("rlm/core/rlm.py: Already patched — nothing to do.")
+    else:
+        try:
+            new_content = apply_patch(rlm_content)
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        rlm_path.write_text(new_content)
+        print("rlm/core/rlm.py patch applied successfully (persistence).")
+
+    if is_prompts_patched(prompts_content):
+        print("rlm/utils/prompts.py: Already patched — nothing to do.")
+    else:
+        prompts_path.write_text(apply_prompts_patch(prompts_content))
+        print("rlm/utils/prompts.py patch applied successfully (deadline nudge).")
 
 
 if __name__ == "__main__":

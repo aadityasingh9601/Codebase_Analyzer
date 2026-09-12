@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import re
+import time
 from datetime import datetime
 
 from colorama import Fore
@@ -22,10 +23,24 @@ RESULTS_FILE = os.path.join(
 # Add your evaluation questions here.
 QUESTIONS = [
     "How many files are there in this repo?",
+    "What's the tech stack of this application?",
     "Print the file contents of apps/user-app/components/AccountForm.tsx.",
     "Print the file contents of apps/bank-webhook/src/index.ts.",
+     "Find all places where authentication is handled. List exact file paths and line-level descriptions.",
+     "Give me a flow chart of how it’s working.",
+     "Give me a high level overview of this codebase — what does it do, how is it structured, what are the main components?",
+     "What is the entry point of this application and what happens when it starts up?",
+     "What design patterns are used in this codebase? Give examples with file references.",
+     "If I wanted to add a new API endpoint, which files would I need to modify and in what order?",
+     "Are there any circular dependencies in this codebase?",
+     "What environment variables does this project require and where are they used?",
+     "How can someone setup this repo locally if they want to contribute to it?",
+     "Explain a bug that could exist in the error handling across this codebase.",
+     "Compare how authentication is handled in this project vs best practices — what's missing?",
+     "Draw me the dependency graph between the main modules — which files depend on which?” 
     "Which file provides the bank webhook endpoint, and what does it import?",
-    "What's the tech stack of this application?",
+    "Explain how tests are working in this repo.",
+    "Summarize the overall backend architecture: read the main entry points of each service and explain how the services communicate with each other.",
 ]
 
 # Heuristic for detecting answers where the model never actually read the file.
@@ -33,8 +48,13 @@ _COMPLAINT_RE = re.compile(
     r"\bcontext is empty\b"
     r"|(i can't|i cannot|i could n?ot|i am unable to)\b"
     r".{0,80}(access|see|view|read|retrieve).{0,80}(the )?(actual )?file (contents?|content)\b"
-    r"|\b(no|don'?t have) .{0,40}(file )?(contents?|content)\b",
+    r'|\b(no|don\'?t have) .{0,40}(file )?(contents?|content)\b',
     re.IGNORECASE | re.DOTALL,
+)
+
+_TOOL_SKELETON_RE = re.compile(
+    r"<tool_call>|<arg_key>|<arg_value>",
+    re.IGNORECASE,
 )
 
 
@@ -48,15 +68,18 @@ def _question_succeeded(response, error) -> bool:
         return False
     if _COMPLAINT_RE.search(str(response)):
         return False
+    if _TOOL_SKELETON_RE.search(str(response)):
+        return False
     return True
 
 
-def write_results(results: list[dict], questions: list[str]) -> None:
+def write_results(results: list[dict], questions: list[str], sys_prompt: str) -> None:
     payload = {
         "run_metadata": {
             "generated_at": datetime.now().isoformat(),
-            "model": results[0]["model"] if results else None,
+            "model": results[0].get("model") if results else None,
             "total_queries": len(questions),
+            "system_prompt": sys_prompt,
         },
         "results": results,
     }
@@ -144,8 +167,13 @@ def print_metrics(metrics: dict, mode: str) -> None:
             )
 
 
-def run_benchmark(mode: str, questions: list[str] | None = None) -> None:
-    rlm = create_rlm(logger=RLMLogger())
+def run_benchmark(
+    mode: str,
+    questions: list[str] | None = None,
+    sys_prompt: str = "distilled",
+    pace: int = 0,
+) -> None:
+    rlm = create_rlm(logger=RLMLogger(), sys_prompt=sys_prompt)
     session = PersistentSession(rlm)
     session.load(user_id="user126_paytm", storage_path=SESSION_DIR)
     max_iterations = rlm.max_iterations
@@ -155,6 +183,8 @@ def run_benchmark(mode: str, questions: list[str] | None = None) -> None:
 
     try:
         for index, question in enumerate(questions, start=1):
+            if index > 1 and pace:
+                time.sleep(pace)
             print("=" * 70)
             print(f"[{index}/{len(questions)}] Question: {question}")
             print("=" * 70)
@@ -184,7 +214,7 @@ def run_benchmark(mode: str, questions: list[str] | None = None) -> None:
                     "completed_at": datetime.now().isoformat(),
                 }
                 results.append(entry)
-                write_results(results, questions)
+                write_results(results, questions, sys_prompt)
                 continue
 
             success = _question_succeeded(response, None)
@@ -204,7 +234,7 @@ def run_benchmark(mode: str, questions: list[str] | None = None) -> None:
                 "completed_at": datetime.now().isoformat(),
             }
             results.append(entry)
-            write_results(results, questions)
+            write_results(results, questions, sys_prompt)
     finally:
         rlm.close()
 
@@ -249,5 +279,22 @@ if __name__ == "__main__":
         nargs="+",
         help="Override the QUESTIONS list with one or more questions.",
     )
+    parser.add_argument(
+        "--sys-prompt",
+        choices=["default", "distilled"],
+        default="distilled",
+        help="Which system prompt to run: 'default' (upstream + orchestrator addendum) or 'distilled' (codebase prompt).",
+    )
+    parser.add_argument(
+        "--pace",
+        type=int,
+        default=0,
+        help="Sleep this many seconds between questions (free-tier rate limiting).",
+    )
     args = parser.parse_args()
-    run_benchmark(args.mode, questions=args.questions)
+    run_benchmark(
+        args.mode,
+        questions=args.questions,
+        sys_prompt=args.sys_prompt,
+        pace=args.pace,
+    )

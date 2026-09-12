@@ -155,14 +155,14 @@ def build_lightweight_context(codebase: dict) -> dict:
 # under __main__ means importing fetchGithub (e.g. from updateGithubRepo.py) for
 # its helper functions does NOT trigger an expensive full-repo download.
 if __name__ == "__main__":
-    repo_url = "https://github.com/aadityasingh9601/Jarvis"
+    repo_url = "https://github.com/aadityasingh9601/ToolJet"
 
     codebase_data = fetch_repo_as_structured_json(repo_url, github_token)
     print(codebase_data)
 
     # Save
-    with open(f"codebase_jarvis_lightweight.json", "w") as f:
+    with open(f"codebase_tooljet_lightweight.json", "w") as f:
         json.dump(build_lightweight_context(codebase_data), f, indent=2)
 
-    with open(f"codebase_jarvis.json", "w") as f:
+    with open(f"codebase_tooljet.json", "w") as f:
         json.dump(codebase_data, f, indent=2)

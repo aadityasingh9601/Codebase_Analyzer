@@ -1,4 +1,3 @@
-
 import os
 
 from dotenv import load_dotenv
@@ -13,13 +12,97 @@ SESSION_DIR = os.path.join(SCRIPT_DIR, "rlm_sessions")
 
 ai_api_key: str = os.getenv("AI_API_KEY")
 
-CODEBASE_JSON_ABS = os.path.join(SCRIPT_DIR, "codebase_paytm.json")
-LIGHTWEIGHT_JSON_ABS = os.path.join(SCRIPT_DIR, "codebase_paytm_lightweight.json")
+CODEBASE_JSON_ABS = os.path.realpath(
+    os.environ.get("CODEBASE_FULL_JSON", os.path.join(SCRIPT_DIR, "codebase_paytm.json"))
+)
+LIGHTWEIGHT_JSON_ABS = os.path.realpath(
+    os.environ.get("CODEBASE_LIGHTWEIGHT_JSON", os.path.join(SCRIPT_DIR, "codebase_paytm_lightweight.json"))
+)
 
-SETUP_CODE = (
-    f'_CODEBASE_JSON = r"{CODEBASE_JSON_ABS}"\n'
-    + open(os.path.join(SCRIPT_DIR, "codebase_helpers.py")).read()
-    + "\n"
+# Local-mode repo root. Local mode is ONLY enabled when CODEBASE_ROOT is set;
+# otherwise we keep the legacy full-JSON behaviour (root = this script dir,
+# LOCAL_MODE=False) so nothing downstream changes.
+if os.environ.get("CODEBASE_ROOT"):
+    CODEBASE_ROOT_ABS = os.path.realpath(os.environ["CODEBASE_ROOT"])
+    LOCAL_MODE = True
+else:
+    CODEBASE_ROOT_ABS = SCRIPT_DIR
+    LOCAL_MODE = False
+
+
+def _embed_module_source(path: str) -> str:
+    """Read a module's source, stripping any `if __name__ == "__main__":` block.
+
+    repl_guardrail.py must stay exec-embeddable: its trailing __main__ smoke
+    test would otherwise run (and print) inside the RLM's setup_code.
+    """
+    with open(path, "r") as f:
+        source = f.read()
+    marker = 'if __name__ == "__main__":'
+    idx = source.find(marker)
+    if idx != -1:
+        source = source[:idx].rstrip() + "\n"
+    return source
+
+
+def _build_setup_code(
+    codebase_root: str,
+    local_mode: bool,
+    codebase_json_abs: str,
+    lightweight_json_abs: str,
+) -> str:
+    """Build the setup_code embedded into every LocalREPL environment.
+
+    Order matters:
+      1. sys.path + absolute vars (so helper/guardrail modules import fine).
+      2. Top up the sandbox __builtins__ with a few benign names the embedded
+         modules reference at definition time (frozenset etc.) and import
+         local_repo_index eagerly (still real __import__ pre-overlay).
+      3. Embed repl_guardrail definitions + apply the overlay (in-place
+         mutation of the sandbox __builtins__ dict).
+      4. Embed codebase_helpers definitions last, so their `open` calls
+         resolve to the jailed version at call time.
+
+    Raw module names (os, json, ...) are only ever bound to underscore aliases
+    in the preamble so the model's later `import os` always resolves to the
+    safe proxy instead of a stale pre-overlay binding.
+    """
+    request_import = "1" if local_mode else "0"
+    boot = (
+        "import sys as _host_sys\n"
+        "import builtins as _real_builtins\n"
+        f"_host_sys.path.insert(0, {SCRIPT_DIR!r})\n"
+        f"_CODEBASE_JSON = {codebase_json_abs!r}\n"
+        f"_CODEBASE_JSON_LIGHT = {lightweight_json_abs!r}\n"
+        f"_CODEBASE_ROOT = {codebase_root!r}\n"
+        f"_LOCAL_MODE = {request_import}\n"
+        "_LRI = None\n"
+        "if _LOCAL_MODE:\n"
+        "    import local_repo_index as _lri_mod\n"
+        "    _LRI = _lri_mod\n"
+    )
+    topup = (
+        "_need_topup = ('frozenset', 'bytes', 'bytearray', 'memoryview', "
+        "'complex', 'staticmethod', 'classmethod', 'super')\n"
+        "for _n in _need_topup:\n"
+        "    if _n not in __builtins__:\n"
+        "        __builtins__[_n] = getattr(_real_builtins, _n)\n"
+    )
+    return (
+        boot
+        + topup
+        + _embed_module_source(os.path.join(SCRIPT_DIR, "repl_guardrail.py"))
+        + "_apply_repl_guardrails(__builtins__, _CODEBASE_ROOT)\n"
+        + open(os.path.join(SCRIPT_DIR, "codebase_helpers.py")).read()
+        + "\n"
+    )
+
+
+SETUP_CODE = _build_setup_code(
+    CODEBASE_ROOT_ABS,
+    LOCAL_MODE,
+    CODEBASE_JSON_ABS,
+    LIGHTWEIGHT_JSON_ABS,
 )
 
 SYSTEM_PROMPT_CODEBASE = (
@@ -59,7 +142,17 @@ def create_rlm(
     logger=None,
     model_name: str = "inclusionai/ling-3.0-flash-fin:free",
     sys_prompt: str = "distilled",
+    repo_root: str | None = None,
 ) -> RLM:
+    if repo_root is not None:
+        setup_code = _build_setup_code(
+            os.path.realpath(repo_root),
+            True,
+            CODEBASE_JSON_ABS,
+            LIGHTWEIGHT_JSON_ABS,
+        )
+    else:
+        setup_code = SETUP_CODE
     if sys_prompt == "distilled":
         custom_system_prompt, orchestrator = SYSTEM_PROMPT_CODEBASE, False
     else:
@@ -72,7 +165,7 @@ def create_rlm(
         },
         environment="local",
         environment_kwargs={
-            "setup_code": SETUP_CODE,
+            "setup_code": setup_code,
         },
         logger=logger,
         max_depth=2,

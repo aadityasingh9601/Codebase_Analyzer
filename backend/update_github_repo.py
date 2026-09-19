@@ -35,7 +35,7 @@ import sys
 from github import Auth, Github
 from dotenv import load_dotenv
 
-from fetchGithub import (
+from local_repo_index import (
     build_lightweight_context,
     extract_imports_js,
     extract_imports_python,

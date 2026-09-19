@@ -1,59 +1,20 @@
-import requests
 import base64
-from github import Github  # pip install PyGithub
-from github import Auth
-from dotenv import load_dotenv
 import os
-import ast
-import re
-import json
+
+import requests  # noqa: F401  (kept for parity with historical imports)
+from dotenv import load_dotenv
+from github import Auth, Github  # pip install PyGithub
+
+from local_repo_index import (
+    build_lightweight_context,
+    extract_imports_js,
+    extract_imports_python,
+    get_file_language,
+    should_skip,
+)
 
 load_dotenv()
 github_token: str = os.getenv("GITHUB_TOKEN")
-
-def extract_imports_python(content: str) -> list:
-    try:
-        tree = ast.parse(content)
-        imports = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                imports.extend(n.name for n in node.names)
-            elif isinstance(node, ast.ImportFrom):
-                if node.module:
-                    imports.append(node.module)
-        return imports
-    except:
-        return []
-
-def extract_imports_js(content: str) -> list:
-    patterns = [
-        r"import\s+.*?\s+from\s+['\"](.+?)['\"]",
-        r"require\(['\"](.+?)['\"]\)",
-    ]
-    imports = []
-    for pattern in patterns:
-        imports.extend(re.findall(pattern, content))
-    return imports
-
-def get_file_language(path: str) -> str:
-    ext_map = {
-        '.py': 'python', '.js': 'javascript', '.ts': 'typescript',
-        '.tsx': 'tsx', '.jsx': 'jsx', '.md': 'markdown',
-        '.json': 'json', '.yml': 'yaml', '.yaml': 'yaml',
-        '.css': 'css', '.html': 'html', '.sql': 'sql'
-    }
-    for ext, lang in ext_map.items():
-        if path.endswith(ext):
-            return lang
-    return 'text'
-
-def should_skip(path: str) -> bool:
-    skip = [
-        'node_modules', '.git', '.sql', '__pycache__', 'dist/', 'build/',
-        '.next/', 'venv/', '.env', '.lock', '.png', '.jpg',
-        '.ico', '.svg', '.woff', '.ttf', '.mp4', '.zip'
-    ]
-    return any(p in path for p in skip)
 
 def get_repo_commit_sha(repo_url: str, github_token: str) -> str:
     """Fetch the latest commit SHA of the default branch for a repo URL."""
@@ -129,23 +90,6 @@ def fetch_repo_as_structured_json(repo_url: str, github_token: str) -> dict:
     
     return structured
 
-def build_lightweight_context(codebase: dict) -> dict:
-    """Only metadata in initial context — no file contents"""
-    return {
-        "repo_name": codebase["repo_name"],
-        "description": codebase["description"],
-        "file_tree": codebase["file_tree"],
-        "files_metadata": {
-            path: {
-                "language": data["language"],
-                "size_lines": data["size_lines"],
-                "imports": data["imports"]
-                # NO content here
-            }
-            for path, data in codebase["files"].items()
-        }
-    }
-
 # "https://github.com/aadityasingh9601/Adobe-UI-clone"
 # "https://github.com/aadityasingh9601/Paytm"
 # "https://github.com/aadityasingh9601/ChatPdf"
@@ -155,14 +99,14 @@ def build_lightweight_context(codebase: dict) -> dict:
 # under __main__ means importing fetchGithub (e.g. from updateGithubRepo.py) for
 # its helper functions does NOT trigger an expensive full-repo download.
 if __name__ == "__main__":
-    repo_url = "https://github.com/aadityasingh9601/ToolJet"
+    repo_url = "https://github.com/aadityasingh9601/jarvis"
 
     codebase_data = fetch_repo_as_structured_json(repo_url, github_token)
     print(codebase_data)
 
     # Save
-    with open(f"codebase_tooljet_lightweight.json", "w") as f:
+    with open(f"codebase_jarvis_lightweight.json", "w") as f:
         json.dump(build_lightweight_context(codebase_data), f, indent=2)
 
-    with open(f"codebase_tooljet.json", "w") as f:
+    with open(f"codebase_jarvis.json", "w") as f:
         json.dump(codebase_data, f, indent=2)

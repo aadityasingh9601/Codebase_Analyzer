@@ -16,7 +16,7 @@ from query_router import DEFAULT_MODEL, route_and_answer
 
 load_dotenv()
 
-dill_file_size=os.stat("./rlm_sessions/user126_paytm.dill").st_size
+dill_file_size=os.stat("./rlm_sessions/user131_cal.diy.dill").st_size
 print(f"Size of already stored RLM session {dill_file_size / 10**6} MB")
 
 json_file_size=os.stat(FULL_JSON_PATH).st_size
@@ -82,7 +82,7 @@ print("=" * 60)
 rlm = create_rlm()
 
 session = PersistentSession(rlm)
-session.load(user_id="user126_paytm", storage_path=SESSION_DIR)
+session.load(user_id="user131_cal.diy", storage_path=SESSION_DIR)
 
 env = rlm._persistent_env
 print(f"context_0 type: {type(env.locals.get('context_0')).__name__}")

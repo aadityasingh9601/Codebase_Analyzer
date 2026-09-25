@@ -23,24 +23,24 @@ RESULTS_FILE = os.path.join(
 # Add your evaluation questions here.
 QUESTIONS = [
     "How many files are there in this repo?",
-    "What's the tech stack of this application?",
-    "Print the file contents of apps/user-app/components/AccountForm.tsx.",
-    "Print the file contents of apps/bank-webhook/src/index.ts.",
-     "Find all places where authentication is handled. List exact file paths and line-level descriptions.",
-     "Give me a flow chart of how it’s working.",
-     "Give me a high level overview of this codebase — what does it do, how is it structured, what are the main components?",
-     "What is the entry point of this application and what happens when it starts up?",
-     "What design patterns are used in this codebase? Give examples with file references.",
-     "If I wanted to add a new API endpoint, which files would I need to modify and in what order?",
-     "Are there any circular dependencies in this codebase?",
-     "What environment variables does this project require and where are they used?",
-     "How can someone setup this repo locally if they want to contribute to it?",
-     "Explain a bug that could exist in the error handling across this codebase.",
-     "Compare how authentication is handled in this project vs best practices — what's missing?",
-     "Draw me the dependency graph between the main modules — which files depend on which?” 
-    "Which file provides the bank webhook endpoint, and what does it import?",
-    "Explain how tests are working in this repo.",
-    "Summarize the overall backend architecture: read the main entry points of each service and explain how the services communicate with each other.",
+    # "What's the tech stack of this application?",
+    # "Print the file contents of apps/user-app/components/AccountForm.tsx.",
+    # "Print the file contents of apps/bank-webhook/src/index.ts.",
+    #  "Find all places where authentication is handled. List exact file paths and line-level descriptions.",
+    #  "Give me a flow chart of how it’s working.",
+    #  "Give me a high level overview of this codebase — what does it do, how is it structured, what are the main components?",
+    #  "What is the entry point of this application and what happens when it starts up?",
+    #  "What design patterns are used in this codebase? Give examples with file references.",
+    #  "If I wanted to add a new API endpoint, which files would I need to modify and in what order?",
+    #  "Are there any circular dependencies in this codebase?",
+    #  "What environment variables does this project require and where are they used?",
+    #  "How can someone setup this repo locally if they want to contribute to it?",
+    #  "Explain a bug that could exist in the error handling across this codebase.",
+    #  "Compare how authentication is handled in this project vs best practices — what's missing?",
+    #  "Draw me the dependency graph between the main modules — which files depend on which?” 
+    # "Which file provides the bank webhook endpoint, and what does it import?",
+    # "Explain how tests are working in this repo.",
+    # "Summarize the overall backend architecture: read the main entry points of each service and explain how the services communicate with each other.",
 ]
 
 # Heuristic for detecting answers where the model never actually read the file.
@@ -175,7 +175,7 @@ def run_benchmark(
 ) -> None:
     rlm = create_rlm(logger=RLMLogger(), sys_prompt=sys_prompt)
     session = PersistentSession(rlm)
-    session.load(user_id="user126_paytm", storage_path=SESSION_DIR)
+    session.load(user_id="user131_cal.diy", storage_path=SESSION_DIR)
     max_iterations = rlm.max_iterations
 
     questions = questions or QUESTIONS

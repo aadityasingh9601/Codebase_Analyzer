@@ -46,9 +46,9 @@ from persistent_session import SessionState
 
 # Defaults matching the existing local indices (override via argv).
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_LIGHT_JSON = os.path.join(SCRIPT_DIR, "codebase_paytm_lightweight.json")
+DEFAULT_LIGHT_JSON = os.path.join(SCRIPT_DIR, "codebases/codebase_cal.diy_lightweight.json")
 DEFAULT_STORAGE_PATH = os.path.join(SCRIPT_DIR, "rlm_sessions")
-DEFAULT_USER_ID = "user126_paytm"
+DEFAULT_USER_ID = "user131_cal.diy"
 DEFAULT_ROOT_PROMPT = ROOT_PROMPT
 
 

@@ -11,3 +11,5 @@ backend/rlm_sessions
 **/__pycache__
 **/*.txt
 backend/*.json
+backend/rlm_benchmark_results
+backend/codebases

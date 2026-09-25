@@ -36,7 +36,7 @@ def clone_repo(repo_url: str, target_dir: str = "./cloned_repo_3") -> str:
     return target_dir
 
 
-repo_path = clone_repo("https://github.com/aadityasingh9601/Paytm")
+repo_path = clone_repo("https://github.com/ToolJet/ToolJet")
 print(repo_path)
 
 # "https://github.com/fastapi/fastapi"
@@ -44,3 +44,7 @@ print(repo_path)
 # https://github.com/ToolJet/ToolJet
 # "https://github.com/aadityasingh9601/ToolJet"
 # https://github.com/aadityasingh9601/Paytm
+# "https://github.com/aadityasingh9601/Adobe-UI-clone"
+# "https://github.com/aadityasingh9601/Paytm"
+# "https://github.com/aadityasingh9601/ChatPdf"
+# "https://github.com/aaditysingh9601/Jarvis"

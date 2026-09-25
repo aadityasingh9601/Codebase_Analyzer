@@ -7,14 +7,14 @@ from rlm import RLM
 load_dotenv()
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-FULL_JSON_PATH = os.path.join(SCRIPT_DIR, "codebase_paytm.json")
-LIGHTWEIGHT_JSON_PATH = os.path.join(SCRIPT_DIR, "codebase_paytm_lightweight.json")
+FULL_JSON_PATH = os.path.join(SCRIPT_DIR, "codebases/codebase_cal.diy.json")
+LIGHTWEIGHT_JSON_PATH = os.path.join(SCRIPT_DIR, "codebases/codebase_cal.diy_lightweight.json")
 SESSION_DIR = os.path.join(SCRIPT_DIR, "rlm_sessions")
 
 ai_api_key: str = os.getenv("AI_API_KEY")
 
-CODEBASE_JSON_ABS = os.path.join(SCRIPT_DIR, "codebase_paytm.json")
-LIGHTWEIGHT_JSON_ABS = os.path.join(SCRIPT_DIR, "codebase_paytm_lightweight.json")
+CODEBASE_JSON_ABS = os.path.join(SCRIPT_DIR, "codebases/codebase_cal.diy.json")
+LIGHTWEIGHT_JSON_ABS = os.path.join(SCRIPT_DIR, "codebases/codebase_cal.diy_lightweight.json")
 
 SETUP_CODE = (
     f'_CODEBASE_JSON = r"{CODEBASE_JSON_ABS}"\n'

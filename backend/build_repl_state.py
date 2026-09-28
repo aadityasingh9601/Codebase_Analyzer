@@ -42,7 +42,10 @@ import json
 import os
 from prompt import ROOT_PROMPT
 
+from dotenv import load_dotenv
 from persistent_session import SessionState
+
+load_dotenv()
 
 # Defaults matching the existing local indices (override via argv).
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -106,6 +109,44 @@ def build_repl_state_from_json(
     return os.path.abspath(file_path)
 
 
+def upload_dill_to_supabase(dill_path: str, repo_name: str) -> bool:
+    """Upload the generated RLM session .dill to the Supabase storage bucket.
+
+    Bucket + path:
+        repo-contexts/{owner}/{repo}/{dill filename}.dill
+
+    This is the same folder + bucket where parse_github_repo.py stores the
+    codebase JSON files, so each repo's folder holds its .json index files AND
+    its session state. Uses SUPABASE_URL + SUPABASE_SECRET_KEY (or
+    SUPABASE_PUBLISHABLE_KEY) from the environment; upsert overwrites in place.
+    """
+    bucket = os.getenv("SUPABASE_BUCKET", "repo-contexts")
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_PUBLISHABLE_KEY")
+    if not url or not key:
+        print("Supabase env vars missing (SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY); skipping upload.")
+        return False
+
+    base_path = (repo_name or "unknown").strip("/")
+    remote_path = f"{base_path}/{os.path.basename(dill_path)}"
+    try:
+        from supabase import create_client
+
+        client = create_client(url, key)
+        with open(dill_path, "rb") as f:
+            data = f.read()
+        client.storage.from_(bucket).upload(
+            remote_path,
+            data,
+            {"upsert": "true", "content-type": "application/octet-stream"},
+        )
+        print(f"Uploaded -> {bucket}/{remote_path}")
+        return True
+    except Exception as e:
+        print(f"Supabase upload failed: {e}")
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -129,6 +170,11 @@ def main():
         storage_path=args.storage,
     )
     print(f"Built REPL state -> {path}")
+
+    # Upload the session state alongside the codebase JSON files in Supabase.
+    with open(args.light_json, "r") as f:
+        repo_name = json.load(f).get("repo_name", "")
+    upload_dill_to_supabase(path, repo_name)
 
 
 if __name__ == "__main__":

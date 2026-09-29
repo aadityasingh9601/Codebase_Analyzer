@@ -2,8 +2,8 @@
 repo_storage.py — single source of truth for Supabase storage of repo contexts.
 
 Centralizes the storage config (bucket, size limit, remote path layout) and the
-upload / download / delete operations so the repo-context scripts stop
-duplicating Supabase client logic.
+upload / streaming download / delete operations so the repo-context scripts
+stop duplicating Supabase client logic.
 
 Remote layout (bucket: env SUPABASE_BUCKET, default "repo-contexts"):
 
@@ -18,13 +18,13 @@ is per-user.
 
 Usage:
     from repo_storage import (
-        BUCKET, split_repo, upload, download, delete, check_size_limit,
+        BUCKET, split_repo, upload, stream_download, delete, check_size_limit,
         storage_path_json, storage_path_light_json, storage_path_dill,
     )
 
     owner, repo = split_repo("calcom/cal.diy")
     upload("codebase_cal.diy.json", storage_path_json(owner, repo, sha))
-    download(storage_path_dill(owner, repo, sha, "user123"), "user123.dill")
+    stream_download(storage_path_dill(owner, repo, sha, "user123"), "user123.dill")
     delete(storage_path_json(owner, repo, sha))
 """
 
@@ -36,6 +36,8 @@ load_dotenv()
 
 BUCKET = os.getenv("SUPABASE_BUCKET", "repo-contexts")
 MAX_FULL_JSON_MB = 50
+DOWNLOAD_CHUNK_BYTES = 8 * 1024
+SIGNED_URL_TTL_SECONDS = 300
 
 
 def _client(bucket: str):
@@ -156,15 +158,66 @@ def upload(
     )
 
 
-def download(remote_path: str, local_path: str, bucket: str = "") -> None:
-    data = _client(bucket).download(remote_path)
-    os.makedirs(os.path.dirname(local_path) or ".", exist_ok=True)
-    with open(local_path, "wb") as f:
-        f.write(data)
+def _signed_url(remote_path: str, bucket: str, expires_in: int = SIGNED_URL_TTL_SECONDS) -> str:
+    """Mint a short-lived signed URL for a remote object."""
+    response = _client(bucket).create_signed_url(remote_path, expires_in)
+    # supabase-py has shipped both spellings of this key across versions.
+    return response.get("signedURL") or response["signedUrl"]
 
 
-def stream_download(remote_path: str, local_path: str, bucket: str = "") -> None:
-    raise NotImplementedError("stream_download not implemented yet")
+def stream_download(remote_path: str, local_path: str, bucket: str = "") -> str:
+    """Download a remote object to `local_path` without buffering it in RAM.
+
+    The object is fetched from a short-lived signed URL and written to disk in
+    DOWNLOAD_CHUNK_BYTES pieces, so peak memory stays a small constant instead
+    of scaling with the file. That matters here because a 50 MB codebase index
+    would otherwise be fully materialized in memory by the storage SDK.
+
+    The bytes land on a temporary path and are moved into place only after the
+    transfer completes, so an interrupted download can never leave a truncated
+    JSON behind that a later step might mistake for a valid context.
+
+    Requires SUPABASE_SECRET_KEY (or another service-role key) to sign URLs; the
+    publishable/anon key cannot sign. Missing objects raise StorageApiError, as
+    before, so callers can keep treating that as "not stored".
+    """
+    import httpx
+
+    url = _signed_url(remote_path, bucket)
+
+    parent = os.path.dirname(local_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    tmp_path = f"{local_path}.part"
+
+    # Generous read timeout: a large index on a slow link can stall for a while.
+    timeout = httpx.Timeout(connect=30.0, read=300.0, write=300.0, pool=30.0)
+    written = 0
+
+    try:
+        with httpx.stream("GET", url, timeout=timeout, follow_redirects=True) as response:
+            response.raise_for_status()
+            expected = int(response.headers.get("content-length") or 0)
+            with open(tmp_path, "wb") as f:
+                for chunk in response.iter_bytes(chunk_size=DOWNLOAD_CHUNK_BYTES):
+                    f.write(chunk)
+                    written += len(chunk)
+                f.flush()
+                os.fsync(f.fileno())
+
+        if expected and written != expected:
+            raise RuntimeError(
+                f"Incomplete download for {remote_path}: "
+                f"got {written} of {expected} bytes"
+            )
+
+        os.replace(tmp_path, local_path)
+    except BaseException:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
+
+    return local_path
 
 
 def delete(remote_path: str, bucket: str = "") -> bool:

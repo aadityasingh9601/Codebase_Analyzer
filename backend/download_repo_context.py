@@ -30,13 +30,13 @@ import sys
 
 from dotenv import load_dotenv
 from repo_storage import (
-    download,
     list_shas,
     resolve_sha,
     split_repo,
     storage_path_dill,
     storage_path_json,
     storage_path_light_json,
+    stream_download,
 )
 
 load_dotenv()
@@ -86,7 +86,7 @@ def download_repo_context(
     written = []
     for remote, local in downloads:
         try:
-            download(remote, local, bucket)
+            stream_download(remote, local, bucket)
         except Exception as e:
             print(f"  via supabase: skipping {remote} (not found? {e})")
             continue

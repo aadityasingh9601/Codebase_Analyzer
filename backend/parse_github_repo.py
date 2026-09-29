@@ -24,6 +24,13 @@ import subprocess
 import sys
 
 from dotenv import load_dotenv
+from repo_storage import (
+    BUCKET,
+    check_size_limit,
+    storage_path_json,
+    storage_path_light_json,
+    upload,
+)
 
 load_dotenv()
 
@@ -230,35 +237,26 @@ def parse_repo(repo_dir: str, output_dir: str, description: str = "") -> tuple:
 def upload_to_supabase(full_json: str, light_json: str, repo_name: str) -> bool:
     """Upload the generated codebase JSON files to the Supabase storage bucket.
 
-    Bucket + paths:
+    Bucket + paths (see repo_storage):
         repo-contexts/{repo_name}/codebase.json
         repo-contexts/{repo_name}/codebase_lightweight.json
 
-    Uses SUPABASE_URL + SUPABASE_SECRET_KEY (or SUPABASE_PUBLISHABLE_KEY) from
-    the environment. Uses upsert so re-parses overwrite in place.
+    Returns False (without uploading anything) if the full JSON exceeds the
+    50 MB cap, since neither file is stored in that case.
     """
-    bucket = os.getenv("SUPABASE_BUCKET", "repo-contexts")
-    url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_PUBLISHABLE_KEY")
-    if not url or not key:
-        print("Supabase env vars missing (SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY); skipping upload.")
+    try:
+        check_size_limit(full_json)
+    except Exception as e:
+        print(f"Skipping Supabase upload: {e}")
         return False
 
-    base_path = (repo_name or "unknown").strip("/")
     try:
-        from supabase import create_client
-
-        client = create_client(url, key)
-        opts = {"upsert": "true", "content-type": "application/json"}
-
-        for local_path, remote_name in (
-            (full_json, "codebase.json"),
-            (light_json, "codebase_lightweight.json"),
+        for local_path, remote_path in (
+            (full_json, storage_path_json(repo_name)),
+            (light_json, storage_path_light_json(repo_name)),
         ):
-            with open(local_path, "rb") as f:
-                data = f.read()
-            client.storage.from_(bucket).upload(f"{base_path}/{remote_name}", data, opts)
-            print(f"Uploaded -> {bucket}/{base_path}/{remote_name}")
+            upload(local_path, remote_path, "application/json")
+            print(f"Uploaded -> {BUCKET}/{remote_path}")
         return True
     except Exception as e:
         print(f"Supabase upload failed: {e}")

@@ -44,6 +44,7 @@ from prompt import ROOT_PROMPT
 
 from dotenv import load_dotenv
 from persistent_session import SessionState
+from repo_storage import BUCKET, storage_path_dill, upload
 
 load_dotenv()
 
@@ -112,35 +113,17 @@ def build_repl_state_from_json(
 def upload_dill_to_supabase(dill_path: str, repo_name: str) -> bool:
     """Upload the generated RLM session .dill to the Supabase storage bucket.
 
-    Bucket + path:
+    Bucket + path (see repo_storage):
         repo-contexts/{owner}/{repo}/{dill filename}.dill
 
     This is the same folder + bucket where parse_github_repo.py stores the
     codebase JSON files, so each repo's folder holds its .json index files AND
-    its session state. Uses SUPABASE_URL + SUPABASE_SECRET_KEY (or
-    SUPABASE_PUBLISHABLE_KEY) from the environment; upsert overwrites in place.
+    its session state.
     """
-    bucket = os.getenv("SUPABASE_BUCKET", "repo-contexts")
-    url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_PUBLISHABLE_KEY")
-    if not url or not key:
-        print("Supabase env vars missing (SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY); skipping upload.")
-        return False
-
-    base_path = (repo_name or "unknown").strip("/")
-    remote_path = f"{base_path}/{os.path.basename(dill_path)}"
+    remote_path = storage_path_dill(repo_name, os.path.basename(dill_path))
     try:
-        from supabase import create_client
-
-        client = create_client(url, key)
-        with open(dill_path, "rb") as f:
-            data = f.read()
-        client.storage.from_(bucket).upload(
-            remote_path,
-            data,
-            {"upsert": "true", "content-type": "application/octet-stream"},
-        )
-        print(f"Uploaded -> {bucket}/{remote_path}")
+        upload(dill_path, remote_path, "application/octet-stream")
+        print(f"Uploaded -> {BUCKET}/{remote_path}")
         return True
     except Exception as e:
         print(f"Supabase upload failed: {e}")

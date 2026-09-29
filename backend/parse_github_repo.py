@@ -27,6 +27,8 @@ from dotenv import load_dotenv
 from repo_storage import (
     BUCKET,
     check_size_limit,
+    resolve_sha,
+    split_repo,
     storage_path_json,
     storage_path_light_json,
     upload,
@@ -223,6 +225,8 @@ def parse_repo(repo_dir: str, output_dir: str, description: str = "") -> tuple:
     lightweight = {
         "repo_name": repo_name,
         "description": description,
+        "default_branch": repo_info["default_branch"],
+        "last_commit_sha": repo_info["last_commit_sha"],
         "file_tree": file_tree,
         "files_metadata": files_metadata,
     }
@@ -234,12 +238,15 @@ def parse_repo(repo_dir: str, output_dir: str, description: str = "") -> tuple:
     return full_json, light_json
 
 
-def upload_to_supabase(full_json: str, light_json: str, repo_name: str) -> bool:
+def upload_to_supabase(full_json: str, light_json: str, repo_name: str, sha: str = "") -> bool:
     """Upload the generated codebase JSON files to the Supabase storage bucket.
 
     Bucket + paths (see repo_storage):
-        repo-contexts/{repo_name}/codebase.json
-        repo-contexts/{repo_name}/codebase_lightweight.json
+        repo-contexts/{owner}/{repo}/{sha}/codebase.json
+        repo-contexts/{owner}/{repo}/{sha}/codebase_lightweight.json
+
+    `sha` is the commit the index was built from. If omitted it is read from
+    the generated JSON's own "last_commit_sha".
 
     Returns False (without uploading anything) if the full JSON exceeds the
     50 MB cap, since neither file is stored in that case.
@@ -251,9 +258,11 @@ def upload_to_supabase(full_json: str, light_json: str, repo_name: str) -> bool:
         return False
 
     try:
+        sha = resolve_sha(sha, full_json, light_json)
+        owner, repo = split_repo(repo_name)
         for local_path, remote_path in (
-            (full_json, storage_path_json(repo_name)),
-            (light_json, storage_path_light_json(repo_name)),
+            (full_json, storage_path_json(owner, repo, sha)),
+            (light_json, storage_path_light_json(owner, repo, sha)),
         ):
             upload(local_path, remote_path, "application/json")
             print(f"Uploaded -> {BUCKET}/{remote_path}")
@@ -287,8 +296,15 @@ def main():
     print(f"Saved full index      -> {full_json}")
     print(f"Saved lightweight     -> {light_json}")
 
-    # Upload both generated files to the Supabase storage bucket.
-    upload_to_supabase(full_json, light_json, get_repo_info(args.repo_dir)["repo_name"])
+    # Upload both generated files to the Supabase storage bucket, filed under
+    # this commit's SHA so other users on a different commit can't collide.
+    repo_info = get_repo_info(args.repo_dir)
+    upload_to_supabase(
+        full_json,
+        light_json,
+        repo_info["repo_name"],
+        repo_info["last_commit_sha"],
+    )
 
     # Parse is done; drop the cloned repo so it doesn't pile up locally.
     shutil.rmtree(args.repo_dir, ignore_errors=True)

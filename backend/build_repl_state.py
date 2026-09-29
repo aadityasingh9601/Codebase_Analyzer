@@ -44,7 +44,13 @@ from prompt import ROOT_PROMPT
 
 from dotenv import load_dotenv
 from persistent_session import SessionState
-from repo_storage import BUCKET, storage_path_dill, upload
+from repo_storage import (
+    BUCKET,
+    resolve_sha,
+    split_repo,
+    storage_path_dill,
+    upload,
+)
 
 load_dotenv()
 
@@ -110,18 +116,27 @@ def build_repl_state_from_json(
     return os.path.abspath(file_path)
 
 
-def upload_dill_to_supabase(dill_path: str, repo_name: str) -> bool:
+def upload_dill_to_supabase(
+    dill_path: str,
+    repo_name: str,
+    sha: str = "",
+    source_json: str = "",
+) -> bool:
     """Upload the generated RLM session .dill to the Supabase storage bucket.
 
     Bucket + path (see repo_storage):
-        repo-contexts/{owner}/{repo}/{dill filename}.dill
+        repo-contexts/{owner}/{repo}/{sha}/users/{user_id}.dill
 
     This is the same folder + bucket where parse_github_repo.py stores the
-    codebase JSON files, so each repo's folder holds its .json index files AND
-    its session state.
+    codebase JSON files, so a repo's commit folder holds its .json index files
+    AND the session states built from that exact commit. `sha` is the commit
+    the state was built from; if omitted it is read from `source_json`'s
+    "last_commit_sha".
     """
-    remote_path = storage_path_dill(repo_name, os.path.basename(dill_path))
     try:
+        sha = resolve_sha(sha, source_json)
+        owner, repo = split_repo(repo_name)
+        remote_path = storage_path_dill(owner, repo, sha, os.path.basename(dill_path))
         upload(dill_path, remote_path, "application/octet-stream")
         print(f"Uploaded -> {BUCKET}/{remote_path}")
         return True
@@ -144,6 +159,11 @@ def main():
     )
     parser.add_argument("--user", default=DEFAULT_USER_ID, help="Session id (dill filename).")
     parser.add_argument("--storage", default=DEFAULT_STORAGE_PATH, help="Output directory for the .dill.")
+    parser.add_argument(
+        "--sha",
+        default="",
+        help="Commit sha the state belongs to (default: read from the lightweight JSON's last_commit_sha).",
+    )
     args = parser.parse_args()
 
     path = build_repl_state_from_json(
@@ -154,10 +174,11 @@ def main():
     )
     print(f"Built REPL state -> {path}")
 
-    # Upload the session state alongside the codebase JSON files in Supabase.
+    # Upload the session state alongside the codebase JSON files in Supabase,
+    # under the same commit folder so it always matches its codebase index.
     with open(args.light_json, "r") as f:
         repo_name = json.load(f).get("repo_name", "")
-    upload_dill_to_supabase(path, repo_name)
+    upload_dill_to_supabase(path, repo_name, args.sha, args.light_json)
 
 
 if __name__ == "__main__":

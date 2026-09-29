@@ -36,8 +36,9 @@ def clone_repo(repo_url: str, target_dir: str = "./cloned_repo_3") -> str:
     return target_dir
 
 
-repo_path = clone_repo("https://github.com/aadityasingh9601/Adobe-UI-clone", "./cloned_repo_4")
-print(repo_path)
+if __name__ == "__main__":
+    repo_path = clone_repo("https://github.com/aadityasingh9601/Adobe-UI-clone", "./cloned_repo_4")
+    print(repo_path)
 
 # "https://github.com/fastapi/fastapi"
 # "https://github.com/calcom/cal.diy"

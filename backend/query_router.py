@@ -3,12 +3,12 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
-from functools import lru_cache
 from typing import Optional
 
 from rlm import RLM
 from rlm.clients import get_client
 from rlm_config import FULL_JSON_PATH, LIGHTWEIGHT_JSON_PATH, ai_api_key
+from session_index import close_session, current_session
 
 DEFAULT_MODEL = "inclusionai/ling-3.0-flash-fin:free"
 
@@ -65,20 +65,31 @@ class RouterResult:
     error: Optional[str] = None
 
 
-@lru_cache(maxsize=1)
+# Index loading used to be @lru_cache(maxsize=1), which cached correctly but
+# pinned the parsed dict for the whole process with no way to release it. It is
+# now delegated to session_index, which shares one parse across all sessions on
+# the same repo, reference-counts it, and frees it when the last session closes.
+# Behavior for these functions is otherwise unchanged: same return values, still
+# parsed once rather than per call.
 def _load_index() -> dict:
-    with open(LIGHTWEIGHT_JSON_PATH, "r") as f:
-        return json.load(f)
+    return current_session(FULL_JSON_PATH, LIGHTWEIGHT_JSON_PATH).light_metadata()
 
 
-@lru_cache(maxsize=1)
 def _load_full() -> dict:
-    with open(FULL_JSON_PATH, "r") as f:
-        return json.load(f)
+    return current_session(FULL_JSON_PATH, LIGHTWEIGHT_JSON_PATH).full_index()
 
 
 def _file_tree() -> list[str]:
     return _load_index()["file_tree"]
+
+
+def close_query_session() -> None:
+    """Release the current session's index reference, freeing the RAM.
+
+    The server calls this when a user's session ends. Until then, the index
+    stays resident so repeated queries don't re-parse 50MB.
+    """
+    close_session()
 
 
 def _serialize_index(index: dict) -> str:

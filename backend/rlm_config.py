@@ -18,6 +18,8 @@ LIGHTWEIGHT_JSON_ABS = os.path.join(SCRIPT_DIR, "codebases/codebase_cal.diy_ligh
 
 SETUP_CODE = (
     f'_CODEBASE_JSON = r"{CODEBASE_JSON_ABS}"\n'
+    f'_LIGHTWEIGHT_JSON = r"{LIGHTWEIGHT_JSON_ABS}"\n'
+    f'_CODEBASE_SESSION_ID = r"{os.getenv("CODEBASE_SESSION_ID", "repl")}"\n'
     + open(os.path.join(SCRIPT_DIR, "codebase_helpers.py")).read()
     + "\n"
 )

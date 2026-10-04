@@ -1,26 +1,113 @@
 @import "tailwindcss";
 
+/*
+ * Design tokens. One accent hue (indigo) carries every interactive element so
+ * the UI reads as a single system. Light and dark are both defined here rather
+ * than relying on the OS preference, so the toggle below is authoritative.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: 0 0% 100%;
+  --surface: 0 0% 100%;
+  --surface-subtle: 240 5% 98%;
+  --border: 240 6% 90%;
+  --border-strong: 240 6% 82%;
+  --foreground: 240 10% 10%;
+  --muted: 240 4% 46%;
+  --accent: 243 75% 59%;
+  --accent-foreground: 0 0% 100%;
+  --accent-subtle: 243 100% 97%;
+  --ring: 243 75% 59%;
+}
+
+:root[data-theme="dark"] {
+  --background: 240 10% 7%;
+  --surface: 240 10% 9%;
+  --surface-subtle: 240 8% 12%;
+  --border: 240 6% 20%;
+  --border-strong: 240 6% 28%;
+  --foreground: 240 20% 96%;
+  --muted: 240 6% 62%;
+  --accent: 243 75% 68%;
+  --accent-foreground: 240 10% 7%;
+  --accent-subtle: 243 30% 16%;
+  --ring: 243 75% 68%;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-background: hsl(var(--background));
+  --color-surface: hsl(var(--surface));
+  --color-surface-subtle: hsl(var(--surface-subtle));
+  --color-border-base: hsl(var(--border));
+  --color-border-strong: hsl(var(--border-strong));
+  --color-foreground: hsl(var(--foreground));
+  --color-muted: hsl(var(--muted));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-accent-subtle: hsl(var(--accent-subtle));
+  --color-ring: hsl(var(--ring));
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  html {
+    color-scheme: light;
+  }
+
+  html[data-theme="dark"] {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Consistent focus ring for keyboard users only. */
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer utilities {
+  /* Subtle dot grid used behind auth / get-started for depth. */
+  .bg-grid {
+    background-image: radial-gradient(
+      circle at 1px 1px,
+      hsl(var(--border-strong) / 0.55) 1px,
+      transparent 0
+    );
+    background-size: 22px 22px;
+  }
+
+  /* Fade the top of the chat transcript into the page background. */
+  .mask-fade-b {
+    mask-image: linear-gradient(to bottom, transparent, black 24px);
+  }
+}
+
+/* Slim scrollbars inside panels, without hiding the affordance entirely. */
+@supports (scrollbar-width: thin) {
+  .scroll-slim {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border-strong)) transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

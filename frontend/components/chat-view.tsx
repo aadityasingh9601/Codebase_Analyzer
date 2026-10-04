@@ -1,0 +1,378 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { AppShell } from "@/components/app-shell";
+import { CopyIcon, CheckIcon, SendIcon, SpinnerIcon, FileIcon } from "@/components/icons";
+import { Button } from "@/components/ui/button";
+import { useSelectedRepo } from "@/hooks/use-selected-repo";
+import { clearSelectedRepo } from "@/lib/repo";
+
+export type Message = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  /** File paths the answer was grounded in. */
+  sources?: string[];
+  /** True while the assistant reply is streaming in. */
+  pending?: boolean;
+};
+
+/** Seeded so the interface can be judged before the backend is connected. */
+const DEMO_MESSAGES: Message[] = [
+  {
+    id: "demo-u1",
+    role: "user",
+    content: "How does booking availability get calculated for a team event?",
+  },
+  {
+    id: "demo-a1",
+    role: "assistant",
+    content:
+      "Availability is computed on the server and returned to the client as a pre-built map of time slots.\n\nThe request path is: the calendar view calls the slots endpoint with the event id and a date range, which delegates to the availability service. That service pulls existing bookings, applies the event's time range, minimum notice, and buffer between meetings, then walks each day in 15-minute increments marking slots as available or taken.\n\nThe interesting part is that buffers are applied per-booking rather than globally, so a 30-minute buffer after one meeting does not eat the gap before the next one.",
+    sources: [
+      "packages/features/bookings/lib/getAvailability.ts",
+      "apps/web/app/api/slots/route.ts",
+      "packages/features/bookings/lib/bookingBuffers.ts",
+    ],
+  },
+  {
+    id: "demo-u2",
+    role: "user",
+    content: "Where are webhook signatures verified?",
+  },
+  {
+    id: "demo-a2",
+    role: "assistant",
+    content:
+      "Every webhook route funnels through a single shared verifier rather than checking signatures inline.\n\n`verifyWebhookSignature` looks up the provider's signing secret from the database, computes the HMAC over the raw request body, and compares in constant time. If the secret is missing the request is rejected outright instead of being allowed through, which is the failure mode you want.",
+    sources: [
+      "apps/web/app/api/webhooks/[provider]/route.ts",
+      "packages/lib/webhooks/verifySignature.ts",
+    ],
+  },
+];
+
+/**
+ * Monotonic message ids. Lives at module scope so generating one is not an
+ * impure operation inside the component body (Date.now() during render), while
+ * staying unique within and across sessions.
+ */
+let messageSeq = 0;
+function nextMessageId(prefix: "u" | "a"): string {
+  messageSeq += 1;
+  return `${prefix}-${messageSeq}`;
+}
+
+const SUGGESTIONS = [
+  "Summarise the data model",
+  "Where is authentication enforced?",
+  "How are background jobs queued?",
+  "What would break if I removed this cache?",
+];
+
+export function ChatView() {
+  const router = useRouter();
+  const repo = useSelectedRepo();
+  const [messages, setMessages] = useState<Message[]>(DEMO_MESSAGES);
+  const [input, setInput] = useState("");
+  const [responding, setResponding] = useState(false);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Pin to the newest message. Smooth scrolling would fight the streaming
+  // updates, so jump instantly while a reply is coming in.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages, responding]);
+
+  // Grow the composer with its content, up to a cap.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+  }, [input]);
+
+  function send(text: string) {
+    const content = text.trim();
+    if (!content || responding) return;
+
+    const userMessage: Message = {
+      id: nextMessageId("u"),
+      role: "user",
+      content,
+    };
+    const replyId = nextMessageId("a");
+
+    setMessages((prev) => [
+      ...prev,
+      userMessage,
+      { id: replyId, role: "assistant", content: "", pending: true },
+    ]);
+    setInput("");
+    setResponding(true);
+
+    // Placeholder for the real streaming call. Replace with the backend
+    // request and append tokens as they arrive.
+    streamDemoReply((chunk, done) => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === replyId
+            ? {
+                ...m,
+                content: m.content + chunk,
+                pending: !done,
+                sources: done ? ["src/example/module.ts", "src/lib/helper.ts"] : undefined,
+              }
+            : m,
+        ),
+      );
+      if (done) setResponding(false);
+    });
+  }
+
+  function handleChangeRepo() {
+    clearSelectedRepo();
+    router.push("/get-started");
+  }
+
+  return (
+    <AppShell repo={repo}>
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div
+          ref={scrollRef}
+          className="scroll-slim min-h-0 flex-1 overflow-y-auto"
+          aria-live="polite"
+        >
+          <div className="mx-auto w-full max-w-[820px] px-5 py-8">
+            {repo ? (
+              <div className="mb-7 flex items-center justify-between gap-3 rounded-xl border border-border-base bg-surface-subtle px-4 py-3">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-medium uppercase tracking-[0.07em] text-muted">
+                    Connected repository
+                  </p>
+                  <a
+                    href={repo.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block truncate font-mono text-[13.5px] text-foreground underline-offset-4 hover:underline"
+                  >
+                    {repo.slug}
+                  </a>
+                </div>
+                <Button type="button" size="sm" variant="secondary" onClick={handleChangeRepo}>
+                  Change
+                </Button>
+              </div>
+            ) : (
+              <div className="mb-7 flex items-center justify-between gap-3 rounded-xl border border-dashed border-border-strong bg-surface-subtle px-4 py-3">
+                <p className="text-[13px] text-muted">
+                  No repository connected yet — pick one to get grounded answers.
+                </p>
+                <a
+                  href="/get-started"
+                  className="shrink-0 rounded-lg bg-accent px-3 py-1.5 text-[13px] font-medium text-accent-foreground transition-[filter] hover:brightness-110"
+                >
+                  Connect repo
+                </a>
+              </div>
+            )}
+
+            <div className="space-y-7">
+              {messages.map((m) => (
+                <MessageBubble key={m.id} message={m} />
+              ))}
+            </div>
+
+            {!responding && messages.length <= 2 ? (
+              <div className="mt-9">
+                <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.07em] text-muted">
+                  Try asking
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {SUGGESTIONS.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => send(s)}
+                      className="rounded-full border border-border-base bg-surface px-3.5 py-1.5 text-[13px] text-muted transition-[background-color,border-color,color] hover:border-border-strong hover:bg-surface-subtle hover:text-foreground"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="border-t border-border-base bg-background/85 backdrop-blur-md">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              send(input);
+            }}
+            className="mx-auto w-full max-w-[820px] px-5 py-4"
+          >
+            <div className="flex items-end gap-2.5 rounded-2xl border border-border-base bg-surface p-2 shadow-[0_1px_2px_rgba(0,0,0,0.04)] focus-within:border-accent focus-within:ring-4 focus-within:ring-accent/12">
+              <textarea
+                ref={textareaRef}
+                rows={1}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  // Enter sends; Shift+Enter inserts a newline.
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    send(input);
+                  }
+                }}
+                placeholder={
+                  repo
+                    ? `Ask anything about ${repo.slug}…`
+                    : "Ask anything about the codebase…"
+                }
+                disabled={responding}
+                className="scroll-slim max-h-[200px] min-h-[38px] flex-1 resize-none bg-transparent px-2.5 py-2 text-[14px] leading-relaxed text-foreground outline-none placeholder:text-muted/70 disabled:opacity-60"
+              />
+              <Button
+                type="submit"
+                size="md"
+                disabled={responding || !input.trim()}
+                className="h-[38px] w-[38px] shrink-0 rounded-xl p-0"
+                aria-label="Send message"
+              >
+                {responding ? (
+                  <SpinnerIcon className="h-4 w-4" />
+                ) : (
+                  <SendIcon className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
+            <p className="mt-2 px-1 text-[11.5px] text-muted">
+              Enter to send · Shift+Enter for a new line. Answers cite the files
+              they used.
+            </p>
+          </form>
+        </div>
+      </div>
+    </AppShell>
+  );
+}
+
+function MessageBubble({ message }: { message: Message }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      // Clipboard blocked — not worth interrupting the user over.
+    }
+  }
+
+  if (message.role === "user") {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-accent px-4 py-2.5 text-[14px] leading-relaxed text-accent-foreground whitespace-pre-wrap">
+          {message.content}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="group">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="flex h-5 w-5 items-center justify-center rounded-md bg-accent-subtle text-[10px] font-bold text-accent">
+          AI
+        </span>
+        <span className="text-[12px] font-medium text-muted">Assistant</span>
+        {message.pending ? (
+          <span className="flex items-center gap-1.5 text-[11.5px] text-muted">
+            <SpinnerIcon className="h-3 w-3" />
+            thinking
+          </span>
+        ) : null}
+      </div>
+
+      <div className="pl-7">
+        <div className="text-[14px] leading-[1.7] whitespace-pre-wrap text-foreground">
+          {message.content}
+          {message.pending && !message.content ? (
+            <span className="ml-0.5 inline-block h-4 w-[2px] animate-pulse bg-accent align-text-bottom" />
+          ) : null}
+        </div>
+
+        {message.sources?.length ? (
+          <div className="mt-3.5">
+            <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.07em] text-muted">
+              Sources
+            </p>
+            <div className="flex flex-col gap-1">
+              {message.sources.map((src) => (
+                <div
+                  key={src}
+                  className="flex items-center gap-2 rounded-lg border border-border-base bg-surface-subtle px-2.5 py-1.5"
+                >
+                  <FileIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
+                  <span className="truncate font-mono text-[12px] text-muted">
+                    {src}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {!message.pending && message.content ? (
+          <button
+            type="button"
+            onClick={copy}
+            className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[12px] text-muted opacity-0 transition-opacity hover:bg-surface-subtle group-hover:opacity-100 focus-visible:opacity-100"
+          >
+            {copied ? (
+              <>
+                <CheckIcon className="h-3.5 w-3.5" />
+                Copied
+              </>
+            ) : (
+              <>
+                <CopyIcon className="h-3.5 w-3.5" />
+                Copy
+              </>
+            )}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Fake token-by-token reply so the streaming UI can be reviewed. Replace with
+ * the real backend call (e.g. reading a ReadableStream from fetch).
+ */
+function streamDemoReply(onChunk: (chunk: string, done: boolean) => void) {
+  const words =
+    "Here is what I found while reading the indexed files. " +
+    "The answer spans a couple of modules, and I have cited the ones that matter below. " +
+    "This response is placeholder text streamed in to demonstrate the typing state.";
+
+  let i = 0;
+  const timer = setInterval(() => {
+    if (i >= words.length) {
+      clearInterval(timer);
+      onChunk("", true);
+      return;
+    }
+    const end = Math.min(i + 4, words.length);
+    onChunk(" " + words.slice(i, end), false);
+    i = end;
+  }, 22);
+}

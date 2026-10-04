@@ -1,86 +1,105 @@
-import { NextResponse } from "next/server";
+import { createServerClient } from "@supabase/ssr";
+import { NextResponse, type NextRequest } from "next/server";
+import { REDIRECT_COOKIE_NAME, readRedirectCookie } from "@/lib/auth/redirect";
+import { POST_AUTH_REDIRECT } from "@/lib/constants";
+import {
+  getSupabaseKey,
+  getSupabaseUrl,
+  isSupabaseConfigured,
+  SUPABASE_COOKIE_OPTIONS,
+} from "@/lib/supabase/env";
 
 /**
- * Supabase OAuth landing route.
+ * Google OAuth landing route.
  *
- * Google returns here with `?code=...`. Supabase's client is configured with
- * `detectSessionInUrl: true`, so the browser-side client normally completes
- * the exchange by itself; this route then forwards the user into the app.
+ * Google → Supabase → here with `?code=`. The browser cannot complete the PKCE
+ * exchange itself: the code verifier lives in a cookie written by the browser
+ * client at the moment `signInWithOAuth` was called, and this handler is the
+ * only place both halves are available. So the exchange happens here, on the
+ * server, and the resulting session cookies are set on the redirect response.
  *
- * We do the exchange server-side too as a fallback: it makes the redirect
- * reliable on browsers where the client-side step races the navigation, and
- * it gives us one place to send people after sign-in.
+ * Exchanging by hand with `fetch(.../token?grant_type=pkce)` — which this route
+ * used to do — cannot work: without the verifier Supabase rejects the code, and
+ * a browser-readable cookie is the wrong home for a token anyway.
  */
-export async function GET(request: Request) {
-  const { searchParams, origin } = new URL(request.url);
+export async function GET(request: NextRequest) {
+  const { searchParams, origin } = request.nextUrl;
   const code = searchParams.get("code");
-  const next = searchParams.get("next") ?? "/get-started";
+  const providerError = searchParams.get("error_description") ?? searchParams.get("error");
 
-  // Only allow same-origin relative paths, so `next` can't be used as an open
-  // redirect to another site.
-  const safeNext = next.startsWith("/") && !next.startsWith("//") ? next : "/get-started";
+  /** @see lib/auth/redirect.ts */
+  const next = readRedirectCookie(request.headers.get("cookie")) ?? POST_AUTH_REDIRECT;
 
+  if (!isSupabaseConfigured()) {
+    return redirectToAuth(origin, "Supabase is not configured.");
+  }
+
+  // Declined on Google's consent screen, or Google failed: no code to exchange.
   if (!code) {
-    return NextResponse.redirect(`${origin}${safeNext}`);
+    return redirectToAuth(origin, providerError);
   }
 
-  try {
-    const { getSupabaseUrl, getSupabaseKey } = await import("@/lib/supabase");
-    const url = getSupabaseUrl();
-    const key = getSupabaseKey();
+  // Built before the exchange so `setAll` has a response to write the session
+  // cookies onto. Cookies set on a redirect response are still delivered by the
+  // browser; mutating `request.cookies` only affects later reads in this same
+  // request, which is why we need both.
+  const response = redirectTo(next, origin);
 
-    if (url && key) {
-      const response = await fetch(`${url}/auth/v1/token?grant_type=pkce`, {
-        method: "POST",
-        headers: {
-          apikey: key,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ auth_code: code }),
-      });
-
-      if (response.ok) {
-        const payload = await response.json();
-
-        // Hand the session to the browser client via cookies, which is what
-        // `persistSession` reads on the next page load.
-        const res = NextResponse.redirect(`${origin}${safeNext}`);
-        if (payload?.access_token && payload?.refresh_token) {
-          const session = {
-            access_token: payload.access_token,
-            refresh_token: payload.refresh_token,
-            expires_at: payload.expires_at ?? Math.floor(Date.now() / 1000) + 3600,
-            token_type: payload.token_type ?? "bearer",
-          };
-          res.cookies.set("sb-access-token", payload.access_token, {
-            httpOnly: false,
-            sameSite: "lax",
-            secure: origin.startsWith("https"),
-            path: "/",
-            maxAge: 60 * 60 * 24 * 7,
-          });
-          res.cookies.set("sb-refresh-token", payload.refresh_token, {
-            httpOnly: false,
-            sameSite: "lax",
-            secure: origin.startsWith("https"),
-            path: "/",
-            maxAge: 60 * 60 * 24 * 7,
-          });
-          res.cookies.set("repochat-session", JSON.stringify(session), {
-            httpOnly: true,
-            sameSite: "lax",
-            secure: origin.startsWith("https"),
-            path: "/",
-            maxAge: 60 * 60 * 24 * 7,
-          });
+  const supabase = createServerClient(getSupabaseUrl(), getSupabaseKey(), {
+    cookieOptions: SUPABASE_COOKIE_OPTIONS,
+    cookies: {
+      getAll() {
+        return request.cookies.getAll();
+      },
+      setAll(cookiesToSet, headers) {
+        for (const { name, value } of cookiesToSet) {
+          request.cookies.set(name, value);
         }
-        return res;
-      }
-    }
-  } catch {
-    // Fall through to the plain redirect below; the client-side exchange in
-    // lib/supabase.ts will handle it.
+
+        for (const { name, value, options } of cookiesToSet) {
+          response.cookies.set(name, value, options);
+        }
+
+        for (const [header, value] of Object.entries(headers)) {
+          response.headers.set(header, value);
+        }
+      },
+    },
+  });
+
+  const { error } = await supabase.auth.exchangeCodeForSession(code);
+
+  if (error) {
+    return redirectToAuth(origin, error.message);
   }
 
-  return NextResponse.redirect(`${origin}${safeNext}`);
+  return response;
+}
+
+function redirectTo(path: string, origin: string): NextResponse {
+  return forgetRedirect(NextResponse.redirect(`${origin}${path}`));
+}
+
+/**
+ * Returns to the login page with a reason attached.
+ *
+ * Also clears the saved destination, otherwise a failed attempt would replay
+ * the same stale path on the next successful sign-in.
+ */
+function redirectToAuth(origin: string, reason?: string | null): NextResponse {
+  const target = new URL("/auth", origin);
+
+  if (reason) {
+    // Long provider strings would blow up the URL; the login page shows them
+    // truncated as a hint, not as a verbatim error.
+    target.searchParams.set("error", reason.slice(0, 200));
+  }
+
+  return forgetRedirect(NextResponse.redirect(target));
+}
+
+/** One-shot destination: expire it on every path out of this route. */
+function forgetRedirect(response: NextResponse): NextResponse {
+  response.cookies.set(REDIRECT_COOKIE_NAME, "", { path: "/", maxAge: 0 });
+  return response;
 }

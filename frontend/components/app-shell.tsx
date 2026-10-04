@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { AuthGuard } from "@/components/auth-guard";
 import { Brand } from "@/components/brand";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { UserMenu } from "@/components/user-menu";
@@ -7,6 +8,10 @@ import { UserMenu } from "@/components/user-menu";
 /**
  * Chrome shared by the signed-in pages (navbar). Kept in one place so
  * /get-started and /chat stay visually identical.
+ *
+ * The auth guard lives here rather than in each page so a new protected route
+ * cannot be added without it: anything rendered inside `AppShell` requires a
+ * session. `proxy.ts` is the real gate; this is the client-side backstop.
  */
 export function AppShell({
   children,
@@ -41,14 +46,14 @@ export function AppShell({
             </span>
           ) : null}
 
-          <div className="ml-auto flex items-center gap-1">
+          <div className="ml-auto flex items-center gap-1.5">
             <ThemeToggle />
             <UserMenu />
           </div>
         </div>
       </header>
 
-      {children}
+      <AuthGuard>{children}</AuthGuard>
     </div>
   );
 }

@@ -2,11 +2,13 @@
 
 import { useState } from "react";
 import { GoogleIcon, SpinnerIcon } from "@/components/icons";
+import { AUTH_CALLBACK_PATH } from "@/lib/constants";
 
 type Props = {
   /** Shown instead of the label while the redirect is being prepared. */
   busyLabel?: string;
   className?: string;
+  disabled?: boolean;
 };
 
 /**
@@ -14,7 +16,11 @@ type Props = {
  * Google, so this button has no "success" state to render — it either
  * navigates away or reports an error inline.
  */
-export function GoogleSignInButton({ busyLabel = "Redirecting…", className = "" }: Props) {
+export function GoogleSignInButton({
+  busyLabel = "Redirecting…",
+  className = "",
+  disabled = false,
+}: Props) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
 
@@ -23,13 +29,20 @@ export function GoogleSignInButton({ busyLabel = "Redirecting…", className = "
     setPending(true);
 
     try {
-      const { getSupabase } = await import("@/lib/supabase");
+      // Remembered in a cookie rather than a `next` search param: the callback
+      // Route Handler reads it after the Google round trip, when the original
+      // URL is long gone.
+      const { rememberRedirect, sanitiseRedirect } = await import("@/lib/auth/redirect");
+      const requested = new URLSearchParams(window.location.search).get("next");
+      rememberRedirect(sanitiseRedirect(requested) ?? window.location.pathname);
+
+      const { getSupabase } = await import("@/lib/supabase/client");
       const supabase = getSupabase();
 
       const { error: oauthError } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
+          redirectTo: `${window.location.origin}${AUTH_CALLBACK_PATH}`,
           scopes: "openid profile email",
         },
       });
@@ -55,7 +68,8 @@ export function GoogleSignInButton({ busyLabel = "Redirecting…", className = "
       <button
         type="button"
         onClick={handleClick}
-        disabled={pending}
+        disabled={pending || disabled}
+        aria-label={disabled ? "Sign-in unavailable: Supabase is not configured" : undefined}
         className={
           "flex h-11 w-full items-center justify-center gap-2.5 rounded-xl border " +
           "border-border-base bg-surface text-sm font-medium text-foreground " +

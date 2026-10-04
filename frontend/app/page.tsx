@@ -1,42 +1,23 @@
-"use client";
-
-import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { redirect } from "next/navigation";
+import { AUTH_PATH, POST_AUTH_REDIRECT } from "@/lib/constants";
+import { isSupabaseConfigured } from "@/lib/supabase/env";
+import { getServerUser } from "@/lib/supabase/server";
 
 /**
- * Root route: send people to sign in, or straight to /get-started when a
- * Supabase session already exists.
+ * Root route: sign in first, then go to the app.
+ *
+ * A Server Component rather than a client-side check so the redirect is part
+ * of the server response — no flash of the wrong page, and no prerendered HTML
+ * that has to be corrected after hydration.
  */
-export default function IndexRedirect() {
-  const router = useRouter();
+export default async function IndexPage() {
+  // With no Supabase project there is nobody to sign in, so show the app rather
+  // than a login screen that cannot work. See `isSupabaseConfigured`.
+  if (!isSupabaseConfigured()) {
+    redirect(POST_AUTH_REDIRECT);
+  }
 
-  useEffect(() => {
-    async function resolve() {
-      // Without Supabase configured there is no session to check, so go
-      // straight to the repo setup step rather than showing a dead login.
-      const { isSupabaseConfigured, getSupabase } = await import("@/lib/supabase");
-      if (!isSupabaseConfigured()) {
-        router.replace("/get-started");
-        return;
-      }
+  const user = await getServerUser();
 
-      try {
-        const { data } = await getSupabase().auth.getUser();
-        router.replace(data.user ? "/get-started" : "/auth");
-      } catch {
-        router.replace("/auth");
-      }
-    }
-
-    void resolve();
-  }, [router]);
-
-  return (
-    <main className="flex flex-1 items-center justify-center">
-      <div className="flex flex-col items-center gap-3">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-border-base border-t-accent" />
-        <p className="text-[13px] text-muted">Loading…</p>
-      </div>
-    </main>
-  );
+  redirect(user ? POST_AUTH_REDIRECT : AUTH_PATH);
 }

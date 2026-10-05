@@ -3,24 +3,33 @@
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
-import { ArrowRightIcon, GithubIcon, SpinnerIcon } from "@/components/icons";
+import { ArrowRightIcon, CheckIcon, GithubIcon, SpinnerIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
-import { parseGitHubRepo } from "@/lib/repo";
+import { loadGithubRepo, type LoadedRepo } from "@/app/lib/actions/loadGithubRepo";
+import { parseGitHubRepo, writeSelectedRepo } from "@/lib/repo";
 import { useSelectedRepo } from "@/hooks/use-selected-repo";
-import { writeSelectedRepo } from "@/lib/repo";
 
 /**
- * The steps run on the client as a stand-in for the real backend job
- * (clone → parse → upload). Each has a deliberate delay so the loading state
- * can be reviewed; swap `runFetchPipeline` for the real request later.
+ * What the backend does during a load. Listed as context while the request is
+ * in flight — not as progress: the API is a single blocking call, so there is no
+ * per-step signal to show and inventing one would be a lie.
  */
-const STEPS = [
-  { label: "Cloning repository", detail: "shallow clone, latest commit" },
-  { label: "Indexing source files", detail: "walking the tree, reading files" },
-  { label: "Building search index", detail: "symbol + keyword metadata" },
-  { label: "Uploading context", detail: "chunked upload to storage" },
+const PIPELINE_STEPS = [
+  "Check whether this commit is already indexed",
+  "Shallow-clone the repository",
+  "Parse source files into the index",
+  "Store the index in Supabase",
 ];
+
+type Status =
+  | { phase: "idle" }
+  | { phase: "loading" }
+  | { phase: "done"; repo: LoadedRepo }
+  | { phase: "error"; message: string };
+
+/** Long enough to read the result, short enough not to feel like a stall. */
+const RESULT_DWELL_MS = 700;
 
 export function RepoSetup() {
   const router = useRouter();
@@ -32,9 +41,10 @@ export function RepoSetup() {
   const fromChat = searchParams.get("repo") ?? "";
 
   const [value, setValue] = useState(fromChat);
-  const [error, setError] = useState("");
-  const [running, setRunning] = useState(false);
-  const [step, setStep] = useState(-1);
+  const [status, setStatus] = useState<Status>({ phase: "idle" });
+
+  const running = status.phase === "loading";
+  const error = status.phase === "error" ? status.message : "";
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -42,29 +52,38 @@ export function RepoSetup() {
 
     const parsed = parseGitHubRepo(value);
     if (!parsed) {
-      setError(
-        "That doesn't look like a GitHub repository. Try https://github.com/owner/repo",
-      );
+      setStatus({
+        phase: "error",
+        message: "That doesn't look like a GitHub repository. Try https://github.com/owner/repo",
+      });
       return;
     }
 
-    setError("");
-    setRunning(true);
-    setStep(0);
+    setStatus({ phase: "loading" });
 
-    const ok = await runFetchPipeline((next) => setStep(next));
-    if (!ok) {
-      setRunning(false);
-      setStep(-1);
+    const result = await loadGithubRepo(parsed.url);
+
+    if (!result.ok) {
+      setStatus({ phase: "error", message: result.error });
       return;
     }
+
+    setStatus({ phase: "done", repo: result.repo });
 
     writeSelectedRepo({
-      slug: parsed.slug,
-      url: parsed.url,
+      slug: result.repo.repo_name,
+      url: result.repo.url,
       addedAt: new Date().toISOString(),
+      sha: result.repo.sha,
+      branch: result.repo.branch,
+      fileCount: result.repo.file_count,
+      totalLines: result.repo.total_lines,
+      description: result.repo.description,
+      storagePath: result.repo.storage_path,
+      cached: result.repo.cached,
     });
 
+    await new Promise((resolve) => setTimeout(resolve, RESULT_DWELL_MS));
     router.push("/chat");
   }
 
@@ -106,9 +125,9 @@ export function RepoSetup() {
                 value={value}
                 onChange={(e) => {
                   setValue(e.target.value);
-                  if (error) setError("");
+                  if (error) setStatus({ phase: "idle" });
                 }}
-                placeholder="https://github.com/calcom/cal.diy"
+                placeholder="https://github.com/pallets/click"
                 disabled={running}
                 className={
                   "h-12 w-full rounded-xl border border-border-base bg-background pl-11 pr-4 " +
@@ -123,48 +142,30 @@ export function RepoSetup() {
             {error ? (
               <p
                 role="alert"
-                className="mt-2.5 text-[12.5px] text-red-600 dark:text-red-400"
+                className="mt-2.5 text-[12.5px] leading-relaxed text-red-600 dark:text-red-400"
               >
                 {error}
               </p>
             ) : null}
 
             {running ? (
-              <ol className="mt-5 space-y-2.5 border-t border-border-base pt-5">
-                {STEPS.map((s, i) => {
-                  const done = i < step;
-                  const active = i === step;
-                  return (
-                    <li key={s.label} className="flex items-start gap-2.5">
-                      <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
-                        {done ? (
-                          <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-                        ) : active ? (
-                          <SpinnerIcon className="h-3.5 w-3.5 text-accent" />
-                        ) : (
-                          <span className="h-1.5 w-1.5 rounded-full bg-border-strong" />
-                        )}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span
-                          className={
-                            "block text-[13.5px] leading-tight " +
-                            (active || done
-                              ? "text-foreground"
-                              : "text-muted/65")
-                          }
-                        >
-                          {s.label}
-                        </span>
-                        <span className="mt-0.5 block text-[11.5px] text-muted/80">
-                          {s.detail}
-                        </span>
-                      </span>
-                    </li>
-                  );
-                })}
-              </ol>
+              <div className="mt-5 rounded-xl border border-border-base bg-surface-subtle px-4 py-3.5">
+                <div className="flex items-center gap-2.5 text-[13.5px] text-foreground">
+                  <SpinnerIcon className="h-4 w-4 text-accent" />
+                  <span>Indexing repository…</span>
+                </div>
+                <ul className="mt-2.5 space-y-1 pl-6 text-[11.5px] leading-relaxed text-muted">
+                  {PIPELINE_STEPS.map((step) => (
+                    <li key={step}>{step}</li>
+                  ))}
+                </ul>
+                <p className="mt-2.5 pl-6 text-[11.5px] text-muted/80">
+                  A large repository can take a few minutes. Keep this tab open.
+                </p>
+              </div>
             ) : null}
+
+            {status.phase === "done" ? <IndexedSummary repo={status.repo} /> : null}
 
             <Button
               type="submit"
@@ -175,7 +176,7 @@ export function RepoSetup() {
               {running ? (
                 <>
                   <SpinnerIcon className="h-4 w-4" />
-                  Fetching repository…
+                  Indexing…
                 </>
               ) : (
                 <>
@@ -209,10 +210,9 @@ export function RepoSetup() {
 
           <div className="mt-7">
             <Notice tone="info">
-              Demo mode: the indexing steps above are simulated so the interface
-              is reviewable end to end. Wire{" "}
-              <code className="font-mono text-[12px]">runFetchPipeline</code> to
-              your backend when the API is ready.
+              Indexing runs on the backend and can take a few minutes on a large
+              repository. If a commit has been indexed before, it is reused
+              instead of rebuilt.
             </Notice>
           </div>
         </div>
@@ -221,18 +221,23 @@ export function RepoSetup() {
   );
 }
 
-/** Placeholder for the real clone/parse/upload call. */
-async function runFetchPipeline(
-  onStep: (step: number) => void,
-): Promise<boolean> {
-  const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-  for (let i = 0; i < STEPS.length; i++) {
-    onStep(i);
-    // Last step lingers briefly so the completed state is visible before the
-    // redirect.
-    await delay(i === STEPS.length - 1 ? 420 : 620);
-  }
-  onStep(STEPS.length);
-  return true;
+/** Confirmation shown for a moment before the redirect to /chat. */
+function IndexedSummary({ repo }: { repo: LoadedRepo }) {
+  return (
+    <div className="mt-5 rounded-xl border border-emerald-500/25 bg-emerald-500/[0.06] px-4 py-3.5">
+      <div className="flex items-center gap-2.5 text-[13.5px] font-medium text-foreground">
+        <CheckIcon className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+        {repo.cached ? "Already indexed — reused the stored copy" : "Indexed successfully"}
+      </div>
+      <p className="mt-2 pl-[26px] text-[12.5px] leading-relaxed text-muted">
+        <span className="font-mono text-foreground">{repo.repo_name}</span>
+        {" · "}
+        {repo.file_count.toLocaleString()} files
+        {" · "}
+        {repo.total_lines.toLocaleString()} lines
+        {" · "}
+        {repo.branch} @ <span className="font-mono">{repo.sha.slice(0, 7)}</span>
+      </p>
+    </div>
+  );
 }

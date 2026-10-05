@@ -6,7 +6,7 @@ import { AppShell } from "@/components/app-shell";
 import { CopyIcon, CheckIcon, SendIcon, SpinnerIcon, FileIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { useSelectedRepo } from "@/hooks/use-selected-repo";
-import { clearSelectedRepo } from "@/lib/repo";
+import { clearSelectedRepo, type SelectedRepo } from "@/lib/repo";
 
 export type Message = {
   id: string;
@@ -18,7 +18,12 @@ export type Message = {
   pending?: boolean;
 };
 
-/** Seeded so the interface can be judged before the backend is connected. */
+/**
+ * Preview transcript, shown only when nothing is connected. It exists so the
+ * interface can be judged on its own; once a repository is actually indexed it
+ * is replaced, because attributing these answers — and their source paths — to
+ * someone else's code would be a lie.
+ */
 const DEMO_MESSAGES: Message[] = [
   {
     id: "demo-u1",
@@ -36,22 +41,28 @@ const DEMO_MESSAGES: Message[] = [
       "packages/features/bookings/lib/bookingBuffers.ts",
     ],
   },
-  {
-    id: "demo-u2",
-    role: "user",
-    content: "Where are webhook signatures verified?",
-  },
-  {
-    id: "demo-a2",
-    role: "assistant",
-    content:
-      "Every webhook route funnels through a single shared verifier rather than checking signatures inline.\n\n`verifyWebhookSignature` looks up the provider's signing secret from the database, computes the HMAC over the raw request body, and compares in constant time. If the secret is missing the request is rejected outright instead of being allowed through, which is the failure mode you want.",
-    sources: [
-      "apps/web/app/api/webhooks/[provider]/route.ts",
-      "packages/lib/webhooks/verifySignature.ts",
-    ],
-  },
 ];
+
+/** Opening message for a real, indexed repository. */
+function greeting(repo: NonNullable<SelectedRepo>): Message {
+  const facts = [
+    repo.fileCount !== undefined ? `${repo.fileCount.toLocaleString()} files` : null,
+    repo.totalLines !== undefined ? `${repo.totalLines.toLocaleString()} lines` : null,
+    repo.branch && repo.sha ? `${repo.branch} @ ${repo.sha.slice(0, 7)}` : null,
+  ].filter(Boolean);
+
+  return {
+    id: "greeting",
+    role: "assistant",
+    content: `Connected to ${repo.slug}${facts.length ? ` (${facts.join(", ")})` : ""}.${
+      repo.description ? `\n\n${repo.description}` : ""
+    }\n\nAsk me anything about the code and I will answer from the index.`,
+  };
+}
+
+function initialMessages(repo: SelectedRepo | null): Message[] {
+  return repo ? [greeting(repo)] : DEMO_MESSAGES;
+}
 
 /**
  * Monotonic message ids. Lives at module scope so generating one is not an
@@ -74,7 +85,7 @@ const SUGGESTIONS = [
 export function ChatView() {
   const router = useRouter();
   const repo = useSelectedRepo();
-  const [messages, setMessages] = useState<Message[]>(DEMO_MESSAGES);
+  const [messages, setMessages] = useState<Message[]>(() => initialMessages(repo));
   const [input, setInput] = useState("");
   const [responding, setResponding] = useState(false);
 
@@ -162,6 +173,7 @@ export function ChatView() {
                   >
                     {repo.slug}
                   </a>
+                  <IndexedFacts repo={repo} />
                 </div>
                 <Button type="button" size="sm" variant="secondary" onClick={handleChangeRepo}>
                   Change
@@ -354,15 +366,37 @@ function MessageBubble({ message }: { message: Message }) {
   );
 }
 
+/** Real index metadata for a connected repo; absent for a hand-typed URL. */
+function IndexedFacts({ repo }: { repo: NonNullable<SelectedRepo> }) {
+  if (!repo.sha) return null;
+
+  return (
+    <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11.5px] text-muted">
+      {repo.branch ? <span className="font-mono">{repo.branch}</span> : null}
+      {repo.sha ? <span className="font-mono">@ {repo.sha.slice(0, 7)}</span> : null}
+      {repo.fileCount !== undefined ? (
+        <span>{repo.fileCount.toLocaleString()} files</span>
+      ) : null}
+      {repo.totalLines !== undefined ? (
+        <span>{repo.totalLines.toLocaleString()} lines</span>
+      ) : null}
+    </p>
+  );
+}
+
 /**
  * Fake token-by-token reply so the streaming UI can be reviewed. Replace with
  * the real backend call (e.g. reading a ReadableStream from fetch).
+ *
+ * It says so in its own output on purpose: a placeholder that reads like a real
+ * grounded answer is indistinguishable from a bug once a real repo is connected.
  */
 function streamDemoReply(onChunk: (chunk: string, done: boolean) => void) {
   const words =
-    "Here is what I found while reading the indexed files. " +
-    "The answer spans a couple of modules, and I have cited the ones that matter below. " +
-    "This response is placeholder text streamed in to demonstrate the typing state.";
+    "Streaming is wired up but no answer model is connected yet, so this is " +
+    "placeholder text. The next step is to replace this timer with a real " +
+    "streaming request to the backend, which will read the stored index for " +
+    "the connected repository and cite the files it used.";
 
   let i = 0;
   const timer = setInterval(() => {

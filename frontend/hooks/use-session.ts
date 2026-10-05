@@ -89,10 +89,22 @@ function getSnapshot(): SessionSnapshot {
   return snapshot;
 }
 
+/**
+ * Frozen module-level constants. `getServerSnapshot` is called repeatedly
+ * during hydration and React compares the result with `Object.is`, so
+ * returning a fresh object literal here every call reads as a changed snapshot
+ * and triggers React's "getServerSnapshot should be cached" infinite-loop
+ * warning.
+ */
+const SERVER_CHECKING: SessionSnapshot = Object.freeze({
+  status: isSupabaseConfigured() ? "checking" : "unconfigured",
+  user: null,
+});
+
 function getServerSnapshot(): SessionSnapshot {
   // Always "checking" on the server: the client resolves the session before
   // rendering anything protected, so no signed-out HTML is ever prerendered.
-  return { status: isSupabaseConfigured() ? "checking" : "unconfigured", user: null };
+  return SERVER_CHECKING;
 }
 
 export function useSession(): SessionSnapshot {

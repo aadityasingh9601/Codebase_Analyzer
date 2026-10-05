@@ -9,6 +9,18 @@ export type SelectedRepo = {
   slug: string;
   url: string;
   addedAt: string;
+  /**
+   * Populated once the backend has actually indexed the repo. A selection
+   * without these is a URL the user typed but never indexed.
+   */
+  sha?: string;
+  branch?: string;
+  fileCount?: number;
+  totalLines?: number;
+  description?: string;
+  storagePath?: string;
+  /** True when the index already existed and nothing was rebuilt. */
+  cached?: boolean;
 };
 
 /**

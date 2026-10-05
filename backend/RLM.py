@@ -34,10 +34,10 @@ print(f"Size of LIGHTWEIGHT json file {json_file_size / 10**6} MB")
 # inclusionai/ling-3.0-flash-fin:free
 
 
-with open(LIGHTWEIGHT_JSON_PATH, "r") as f:
-    lightweight_data = json.load(f)
+# with open(LIGHTWEIGHT_JSON_PATH, "r") as f:
+#     lightweight_data = json.load(f)
 
-print(f"Files in repo: {len(lightweight_data['file_tree'])}")
+# print(f"Files in repo: {len(lightweight_data['file_tree'])}")
 
 # ============================================================
 # SESSION 1: Load codebase metadata + define on-demand functions

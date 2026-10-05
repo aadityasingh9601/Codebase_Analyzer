@@ -3,27 +3,33 @@ import shutil
 import os
 from pathlib import Path
 
-def clone_repo(repo_url: str, target_dir: str = "./cloned_repo_3") -> str:
+def clone_repo(repo_url: str, target_dir: str = "./cloned_repo_3", branch: str = "") -> str:
     """
     Clone a GitHub repo using shallow clone.
     Returns the path to cloned repo.
+
+    `branch` is optional: when given, that branch is cloned instead of the
+    repository's default, which is how the API server pins an index to `main`.
     """
-    
+
     # Clean up if already exists
     if os.path.exists(target_dir):
         shutil.rmtree(target_dir)
-    
+
     print(f"Cloning {repo_url}...")
-    
+
+    command = [
+        "git", "clone",
+        "--depth", "1",        # shallow clone — latest commit only
+        "--single-branch",     # only default branch, no others
+        "--no-tags",           # skip tags, saves time
+    ]
+    if branch:
+        command += ["--branch", branch]
+    command += [repo_url, target_dir]
+
     result = subprocess.run(
-        [
-            "git", "clone",
-            "--depth", "1",        # shallow clone — latest commit only
-            "--single-branch",     # only default branch, no others
-            "--no-tags",           # skip tags, saves time
-            repo_url,
-            target_dir
-        ],
+        command,
         capture_output=True,
         text=True,
         timeout=120               # fail after 2 minutes, not hang forever

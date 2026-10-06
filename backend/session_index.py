@@ -33,12 +33,13 @@ Design notes:
 Server integration sketch:
     import session_index
 
-    @app.post("/query")
-    def query(user_id: str, ...):
-        session_index.set_default_session_id(user_id)   # route this request
+    async def query(user_id: str, ...):
+        # ContextVar: safe under concurrent requests, unlike a module global.
+        token = session_index.set_default_session_id(user_id)
         try:
-            return route_and_answer(question)
+            return await run_in_threadpool(route_and_answer, question)
         finally:
+            session_index.reset_default_session_id(token)
             session_index.close_session(user_id)        # free on completion
 
     # background task
@@ -60,6 +61,7 @@ import json
 import os
 import threading
 import time
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -73,6 +75,10 @@ __all__ = [
     "current_session",
     "current_session_id",
     "set_default_session_id",
+    "reset_default_session_id",
+    "register_session_paths",
+    "forget_session_paths",
+    "resolve_session_paths",
     "shared_index_stats",
 ]
 
@@ -136,23 +142,70 @@ _last_used: dict[str, float] = {}
 _lock = threading.RLock()
 
 DEFAULT_SESSION_ID = "__default__"
-_default_session_id = DEFAULT_SESSION_ID
+
+# Context-local, NOT a module global.
+#
+# `set_default_session_id` used to write `global _default_session_id`, so two
+# concurrent requests overwrote each other: request A would set "user_a", then
+# request B setting "user_b" would reroute A's subsequent `current_session()`
+# into B's repo. A ContextVar is copied per asyncio Task, so each request sees
+# only its own value.
+_default_session_id: "ContextVar[str]" = ContextVar(
+    "session_index_default_session_id", default=DEFAULT_SESSION_ID
+)
+
+# session_id -> (full_json_path, light_json_path).
+#
+# Query routing needs the paths WITHOUT being handed them: `route_and_answer`
+# and the exec'd REPL helpers call `current_session()` with no arguments, and
+# must not fall back to a hardcoded repo. `acquire_session` registers here.
+_session_paths: dict[str, tuple] = {}
 
 
-def set_default_session_id(session_id: Optional[str]) -> None:
+def set_default_session_id(session_id: Optional[str]) -> "Token":
     """Route the unscoped `current_session()` accessor to a named session.
 
-    The server will call this at request time so the stateless helpers in
-    `query_router` operate on the current user's session rather than one
-    process-wide fallback.
+    Returns a token so callers that care (request teardown) can restore the
+    previous value. Idempotent within a request: setting it twice is safe.
     """
-    global _default_session_id
-    _default_session_id = session_id or DEFAULT_SESSION_ID
+    return _default_session_id.set(session_id or DEFAULT_SESSION_ID)
+
+
+def reset_default_session_id(token: "Token") -> None:
+    """Undo a `set_default_session_id`.
+
+    Silently ignores an already-consumed token: teardown paths run in `finally`
+    blocks, and a double reset must not mask the exception they were protecting.
+    """
+    try:
+        _default_session_id.reset(token)
+    except (ValueError, RuntimeError):
+        # ValueError: token from another ContextVar. RuntimeError: already reset.
+        pass
 
 
 def current_session_id() -> str:
     """The session id that `current_session()` and `close_session()` target."""
-    return _default_session_id
+    return _default_session_id.get()
+
+
+def register_session_paths(
+    session_id: str, full_json_path: str, light_json_path: str
+) -> None:
+    """Record where this session's index files live, for no-arg `current_session()`."""
+    with _lock:
+        _session_paths[session_id] = (full_json_path, light_json_path)
+
+
+def forget_session_paths(session_id: str) -> None:
+    with _lock:
+        _session_paths.pop(session_id, None)
+
+
+def resolve_session_paths(session_id: Optional[str] = None) -> Optional[tuple]:
+    """`(full_json_path, light_json_path)` for `session_id`, or None."""
+    with _lock:
+        return _session_paths.get(session_id or _default_session_id.get())
 
 
 def _cache_key(full_path: str, light_path: str) -> Optional[tuple]:
@@ -329,6 +382,7 @@ def acquire_session(
         )
 
     with _lock:
+        _session_paths[session_id] = (full_json_path, light_json_path)
         previous = _sessions.get(session_id)
         if previous == key:
             # Already pinned. Re-acquiring is a no-op, NOT a new reference:
@@ -369,9 +423,10 @@ def close_session(session_id: Optional[str] = None) -> None:
     currently routed to, which is what the server's request teardown wants.
     """
     with _lock:
-        target = session_id or _default_session_id
+        target = session_id or _default_session_id.get()
         key = _sessions.pop(target, None)
         _last_used.pop(target, None)
+        _session_paths.pop(target, None)
         if key is None:
             return
         _release_key(key)
@@ -406,6 +461,7 @@ def close_all() -> None:
         _sessions.clear()
         _entries.clear()
         _last_used.clear()
+        _session_paths.clear()
         gc.collect()
 
 
@@ -419,15 +475,32 @@ def current_session(full_json_path: str = "", light_json_path: str = "") -> Code
 
     This preserves the stateless call style used by `query_router` and the
     exec'd REPL helpers, while routing to a real per-user session so the
-    pinning is still bounded. The server calls `set_default_session_id()`.
+    pinning is still bounded.
+
+    When no paths are supplied — the case for `query_router` and the REPL
+    helpers, which never know where the index lives — they are resolved from
+    the registry populated by `acquire_session`. This is the load-bearing
+    fix for the wrong-repo bug: an empty call previously fell back to a
+    hardcoded path, so a session pointed at one repo could read another's
+    index silently.
     """
     if not full_json_path:
-        from rlm_config import CODEBASE_JSON_ABS, LIGHTWEIGHT_JSON_ABS
+        sid = _default_session_id.get()
+        registered = resolve_session_paths(sid)
+        if registered is None and sid != DEFAULT_SESSION_ID:
+            raise FileNotFoundError(
+                f"Session {sid!r} has no index registered. "
+                f"acquire_session() must be called with its paths first."
+            )
+        if registered is None:
+            # Unnamed fallback session (health checks, CLI use).
+            from rlm_config import CODEBASE_JSON_ABS, LIGHTWEIGHT_JSON_ABS
 
-        full_json_path = CODEBASE_JSON_ABS
-        light_json_path = light_json_path or LIGHTWEIGHT_JSON_ABS
+            registered = (CODEBASE_JSON_ABS, LIGHTWEIGHT_JSON_ABS)
+        full_json_path, light_json_path = registered
+        return acquire_session(sid, full_json_path, light_json_path)
 
-    return acquire_session(_default_session_id, full_json_path, light_json_path)
+    return acquire_session(_default_session_id.get(), full_json_path, light_json_path)
 
 
 def shared_index_stats() -> dict:

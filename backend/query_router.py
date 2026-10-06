@@ -7,10 +7,15 @@ from typing import Optional
 
 from rlm import RLM
 from rlm.clients import get_client
-from rlm_config import FULL_JSON_PATH, LIGHTWEIGHT_JSON_PATH, ai_api_key
-from session_index import close_session, current_session
+from rlm_config import ai_api_key
+from session_index import (
+    close_session,
+    current_session,
+    current_session_id,
+    resolve_session_paths,
+)
 
-DEFAULT_MODEL = "inclusionai/ling-3.0-flash-fin:free"
+DEFAULT_MODEL = "inclusionai/ling-3.0-flash-sante:free"
 
 GAUGE_MAX_OUTPUT_TOKENS = 4096
 DIRECT_BUDGET_CHARS = 60_000
@@ -69,14 +74,18 @@ class RouterResult:
 # pinned the parsed dict for the whole process with no way to release it. It is
 # now delegated to session_index, which shares one parse across all sessions on
 # the same repo, reference-counts it, and frees it when the last session closes.
-# Behavior for these functions is otherwise unchanged: same return values, still
-# parsed once rather than per call.
+#
+# No arguments on purpose: these run deep inside `route_and_answer` and the
+# exec'd REPL, where the index paths are not in scope. `current_session()`
+# resolves them from the session_index registry for the current request.
+# Passing a hardcoded path here was the wrong-repo bug: a session pointed at
+# one repo silently read another's index.
 def _load_index() -> dict:
-    return current_session(FULL_JSON_PATH, LIGHTWEIGHT_JSON_PATH).light_metadata()
+    return current_session().light_metadata()
 
 
 def _load_full() -> dict:
-    return current_session(FULL_JSON_PATH, LIGHTWEIGHT_JSON_PATH).full_index()
+    return current_session().full_index()
 
 
 def _file_tree() -> list[str]:
@@ -267,6 +276,12 @@ def _escalate_to_rlm(rlm: Optional[RLM], question: str, reason: str) -> RouterRe
     else:
         close_after = False
     try:
+        # `context` is injected by setup_code (a SharedContext proxy). The
+        # skip flag is one-shot — RLM clears it after the first completion —
+        # so re-arm it here, or the next completion() replaces our metadata
+        # with the (empty) prompt string and `context['file_tree']` breaks.
+        if hasattr(rlm, "_skip_next_context_add"):
+            rlm._skip_next_context_add = True
         result = rlm.completion(prompt="", root_prompt=question)
     except Exception as exc:
         return RouterResult(
@@ -368,6 +383,23 @@ def route_and_answer(question: str, rlm: Optional[RLM] = None) -> RouterResult:
 
 
 def _create_default_rlm() -> RLM:
+    """Fallback RLM for the current session (CLI use, tests).
+
+    The HTTP path always passes an explicit `rlm` built by the session
+    registry, so this only runs when nothing has registered an index yet —
+    in which case there is no repo to point it at.
+    """
     from rlm_config import create_rlm
 
-    return create_rlm()
+    paths = resolve_session_paths()
+    if paths is None:
+        raise FileNotFoundError(
+            "No codebase index registered for the current session. "
+            "acquire_session() must be called before routing a query."
+        )
+    full_path, light_path = paths
+    return create_rlm(
+        full_json_path=full_path,
+        light_json_path=light_path,
+        session_id=current_session_id(),
+    )

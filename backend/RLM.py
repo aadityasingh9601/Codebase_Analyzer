@@ -16,7 +16,7 @@ from query_router import DEFAULT_MODEL, route_and_answer
 
 load_dotenv()
 
-dill_file_size=os.stat("./rlm_sessions/user131_cal.diy.dill").st_size
+dill_file_size=os.stat("./rlm_sessions/user126_paytm.dill").st_size
 print(f"Size of already stored RLM session {dill_file_size / 10**6} MB")
 
 json_file_size=os.stat(FULL_JSON_PATH).st_size
@@ -30,8 +30,7 @@ print(f"Size of LIGHTWEIGHT json file {json_file_size / 10**6} MB")
 # minimax/minimax-m3:free (Not free anymore)
 # poolside/laguna-s-2.1:free
 # nvidia/nemotron-3.5-lightning:free
-# thinkingmachines/inkling:free (Can't use here, only for agentic harnesses)
-# inclusionai/ling-3.0-flash-fin:free
+# inclusionai/ling-3.0-flash-sante:free
 
 
 # with open(LIGHTWEIGHT_JSON_PATH, "r") as f:
@@ -82,13 +81,13 @@ print("=" * 60)
 rlm = create_rlm()
 
 session = PersistentSession(rlm)
-session.load(user_id="user131_cal.diy", storage_path=SESSION_DIR)
+session.load(user_id="user126_paytm", storage_path=SESSION_DIR)
 
 env = rlm._persistent_env
 print(f"context_0 type: {type(env.locals.get('context_0')).__name__}")
 print(f"Functions available: {[k for k in env.locals if callable(env.locals[k])]}")
 
-question = " ".join(sys.argv[1:]) or "List down the contents of all the .css files in this repo."
+question = " ".join(sys.argv[1:]) or "Print the file contents of apps/user-app/components/AccountForm.tsx."
 
 try:
     result = rlm.completion(

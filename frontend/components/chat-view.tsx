@@ -7,6 +7,7 @@ import { CopyIcon, CheckIcon, SendIcon, SpinnerIcon, FileIcon } from "@/componen
 import { Button } from "@/components/ui/button";
 import { useSelectedRepo } from "@/hooks/use-selected-repo";
 import { clearSelectedRepo, type SelectedRepo } from "@/lib/repo";
+import { askQuestion } from "@/app/lib/actions/askQuestion";
 
 export type Message = {
   id: string;
@@ -14,8 +15,10 @@ export type Message = {
   content: string;
   /** File paths the answer was grounded in. */
   sources?: string[];
-  /** True while the assistant reply is streaming in. */
+  /** True while the assistant reply is loading. */
   pending?: boolean;
+  /** Set when the backend could not produce an answer. */
+  error?: string;
 };
 
 /**
@@ -107,9 +110,9 @@ export function ChatView() {
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [input]);
 
-  function send(text: string) {
+  async function send(text: string) {
     const content = text.trim();
-    if (!content || responding) return;
+    if (!content || responding || !repo) return;
 
     const userMessage: Message = {
       id: nextMessageId("u"),
@@ -126,23 +129,27 @@ export function ChatView() {
     setInput("");
     setResponding(true);
 
-    // Placeholder for the real streaming call. Replace with the backend
-    // request and append tokens as they arrive.
-    streamDemoReply((chunk, done) => {
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === replyId
-            ? {
-                ...m,
-                content: m.content + chunk,
-                pending: !done,
-                sources: done ? ["src/example/module.ts", "src/lib/helper.ts"] : undefined,
-              }
-            : m,
-        ),
-      );
-      if (done) setResponding(false);
-    });
+    const result = await askQuestion(content, repo.slug, repo.sha);
+
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.id !== replyId) return m;
+
+        if (!result.ok) {
+          return { ...m, pending: false, error: result.error };
+        }
+
+        return {
+          ...m,
+          pending: false,
+          content: result.query.answer,
+          sources: result.query.evidencePaths,
+          error: result.query.error ?? undefined,
+        };
+      }),
+    );
+
+    setResponding(false);
   }
 
   function handleChangeRepo() {
@@ -199,7 +206,7 @@ export function ChatView() {
               ))}
             </div>
 
-            {!responding && messages.length <= 2 ? (
+            {repo && !responding && messages.length <= 2 ? (
               <div className="mt-9">
                 <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.07em] text-muted">
                   Try asking
@@ -245,15 +252,15 @@ export function ChatView() {
                 placeholder={
                   repo
                     ? `Ask anything about ${repo.slug}…`
-                    : "Ask anything about the codebase…"
+                    : "Connect a repository to start asking…"
                 }
-                disabled={responding}
+                disabled={responding || !repo}
                 className="scroll-slim max-h-[200px] min-h-[38px] flex-1 resize-none bg-transparent px-2.5 py-2 text-[14px] leading-relaxed text-foreground outline-none placeholder:text-muted/70 disabled:opacity-60"
               />
               <Button
                 type="submit"
                 size="md"
-                disabled={responding || !input.trim()}
+                disabled={responding || !repo || !input.trim()}
                 className="h-[38px] w-[38px] shrink-0 rounded-xl p-0"
                 aria-label="Send message"
               >
@@ -265,8 +272,9 @@ export function ChatView() {
               </Button>
             </div>
             <p className="mt-2 px-1 text-[11.5px] text-muted">
-              Enter to send · Shift+Enter for a new line. Answers cite the files
-              they used.
+              {repo
+                ? `Enter to send · Shift+Enter for a new line. Answers cite the files they used.`
+                : "Connect a repository on /get-started, then this chat reads only its code."}
             </p>
           </form>
         </div>
@@ -320,6 +328,13 @@ function MessageBubble({ message }: { message: Message }) {
             <span className="ml-0.5 inline-block h-4 w-[2px] animate-pulse bg-accent align-text-bottom" />
           ) : null}
         </div>
+
+        {message.error ? (
+          <p className="mt-3 rounded-lg border border-border-base bg-surface-subtle px-3 py-2 text-[12.5px] leading-relaxed text-muted">
+            {message.content ? "Note: " : ""}
+            {message.error}
+          </p>
+        ) : null}
 
         {message.sources?.length ? (
           <div className="mt-3.5">
@@ -382,31 +397,4 @@ function IndexedFacts({ repo }: { repo: NonNullable<SelectedRepo> }) {
       ) : null}
     </p>
   );
-}
-
-/**
- * Fake token-by-token reply so the streaming UI can be reviewed. Replace with
- * the real backend call (e.g. reading a ReadableStream from fetch).
- *
- * It says so in its own output on purpose: a placeholder that reads like a real
- * grounded answer is indistinguishable from a bug once a real repo is connected.
- */
-function streamDemoReply(onChunk: (chunk: string, done: boolean) => void) {
-  const words =
-    "Streaming is wired up but no answer model is connected yet, so this is " +
-    "placeholder text. The next step is to replace this timer with a real " +
-    "streaming request to the backend, which will read the stored index for " +
-    "the connected repository and cite the files it used.";
-
-  let i = 0;
-  const timer = setInterval(() => {
-    if (i >= words.length) {
-      clearInterval(timer);
-      onChunk("", true);
-      return;
-    }
-    const end = Math.min(i + 4, words.length);
-    onChunk(" " + words.slice(i, end), false);
-    i = end;
-  }, 22);
 }

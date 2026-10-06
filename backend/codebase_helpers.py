@@ -51,9 +51,12 @@ if not _LIGHTWEIGHT_JSON:
 
 def load_codebase_metadata() -> dict:
     """Load the lightweight repo metadata (file tree, imports, line counts)."""
-    light_path = os.environ.get(
+    light_path = _LIGHTWEIGHT_JSON or os.environ.get(
         "CODEBASE_LIGHTWEIGHT_JSON",
-        os.path.join(os.path.dirname(os.path.abspath(_CODEBASE_JSON)), "codebase_paytm_lightweight.json"),
+        os.path.join(
+            os.path.dirname(os.path.abspath(_CODEBASE_JSON)),
+            "codebase_lightweight.json",
+        ),
     )
     with open(light_path, "r") as f:
         return json.load(f)

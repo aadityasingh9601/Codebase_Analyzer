@@ -2,7 +2,8 @@
 main.py — HTTP API for RepoChat.
 
     POST /api/loadrepo   index a GitHub repository and store it in Supabase
-    GET  /api/health     liveness probe
+    POST /api/userquery  answer a question about an indexed repository
+    GET  /api/health     liveness probe + live session/index stats
 
 `POST /api/loadrepo` is the only endpoint the frontend needs to go from a pasted
 URL to a chat session. It runs the same three steps the scripts do by hand:
@@ -16,6 +17,12 @@ URL to a chat session. It runs the same three steps the scripts do by hand:
 The response carries the resolved `repo_name`, commit `sha`, `branch` and file
 count so the frontend can show what it actually got instead of a placeholder.
 
+`POST /api/userquery` picks the user's live session for a repository, downloads
+its index into a temp directory if it is not resident yet, parses it once (shared
+across users on that repo), and runs `query_router.route_and_answer`. Routed
+either by a cheap direct model call or, when the question needs real analysis,
+by an RLM running a Python REPL against the index.
+
 Everything before the clone is a fast check; the clone and parse are slow and
 blocking (up to minutes on a large repo), so they run in a worker thread and
 the event loop stays free to serve other requests.
@@ -24,7 +31,8 @@ Auth: callers send the Supabase access token as `Authorization: Bearer <jwt>`,
 the same token the browser holds. It is verified against the project's JWKS, so
 the endpoint is not open to anyone. Set `SUPABASE_JWKS_URL` in the environment
 to enable that; with it unset the endpoint is anonymous (handy for curl during
-development, unsafe in production).
+development, unsafe in production — every anonymous caller then shares one
+session per repository).
 
 Usage:
     uvicorn main:app --port 8000
@@ -34,10 +42,13 @@ Environment (see backend/.env):
     SUPABASE_URL, SUPABASE_SECRET_KEY, SUPABASE_BUCKET  for storage
     SUPABASE_JWKS_URL                                  for token verification
     GITHUB_TOKEN                                       optional, raises API rate limits
+    MAX_CONCURRENT_INDEXES                             concurrent clone+parse jobs
+    JANITOR_INTERVAL_SECONDS                           idle-session sweep period
 """
 
 import argparse
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -53,6 +64,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
+from contextlib import asynccontextmanager
 
 # The pipeline modules live beside this file as flat scripts. Inserting the
 # directory keeps `import fetch_github_repo` working no matter which cwd the
@@ -74,13 +86,52 @@ from repo_storage import (  # noqa: E402
     list_shas,
     storage_path_json,
 )
+import session_registry  # noqa: E402
+from session_index import shared_index_stats  # noqa: E402
 
 log = logging.getLogger("repochat")
+
+# How often the janitor wakes up to free idle sessions and index files.
+# This is the poll interval, NOT the expiry: an entry is only reclaimed after
+# RLM_IDLE_SECONDS / INDEX_IDLE_SECONDS with no use. Polling can be frequent
+# because it is cheap; the TTL is what bounds memory.
+JANITOR_INTERVAL_SECONDS = int(os.getenv("JANITOR_INTERVAL_SECONDS", "60"))
+
+
+async def _janitor_loop() -> None:
+    """Periodically reclaim idle RLMs, parsed indexes, and their temp files."""
+    while True:
+        await asyncio.sleep(JANITOR_INTERVAL_SECONDS)
+        try:
+            evicted = await run_in_threadpool(session_registry.evict_idle)
+            if evicted:
+                log.info("janitor evicted %d idle session(s)", len(evicted))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("janitor sweep failed")
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    janitor = asyncio.create_task(_janitor_loop())
+    try:
+        yield
+    finally:
+        janitor.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await janitor
+        try:
+            await run_in_threadpool(session_registry.cleanup_all)
+        except Exception:
+            log.exception("shutdown cleanup failed")
+
 
 app = FastAPI(
     title="RepoChat API",
     version="1.0.0",
     description="Indexes GitHub repositories so the chat can answer from real source.",
+    lifespan=_lifespan,
 )
 
 # Cloning is disk- and network-heavy. More than a couple at once makes a
@@ -136,6 +187,46 @@ class LoadRepoResponse(BaseModel):
     storage_path: str = Field(
         ..., description="Bucket path holding the index, for later retrieval."
     )
+
+
+class UserQueryRequest(BaseModel):
+    question: str = Field(
+        ...,
+        min_length=1,
+        max_length=4000,
+        description="Natural-language question about the connected repository.",
+        examples=["How does the CLI parse command line options?"],
+    )
+    repo_name: str | None = Field(
+        None,
+        description="owner/repo to query. Omit if the user has exactly one connected repository.",
+        examples=["pallets/click"],
+    )
+    sha: str | None = Field(
+        None,
+        description="Commit to query. Omit to use the connected repository's indexed commit.",
+    )
+
+
+class UserQueryResponse(BaseModel):
+    answer: str = Field(..., description="Answer text, or '' when it could not be produced.")
+    tier: str = Field(..., description="Which routing tier answered: DIRECT, META, or RLM.")
+    reason: str = Field("", description="Why the router chose that tier.")
+    answer_source: str = Field("", description="Where the answer text came from.")
+    evidence_paths: list[str] = Field(
+        default_factory=list,
+        description="Repository paths the answer drew on, for citation chips.",
+    )
+    repo_name: str = Field(..., description="Repository that was actually queried.")
+    sha: str = Field(..., description="Commit that was actually queried.")
+    elapsed_seconds: float = Field(..., description="Server-side time for the whole query.")
+    direct_calls: int = 0
+    direct_input_tokens: int = 0
+    direct_output_tokens: int = 0
+    rlm_input_tokens: int = 0
+    rlm_output_tokens: int = 0
+    rlm_iterations: int = 0
+    error: str | None = Field(None, description="Present when the query failed.")
 
 
 # ---------------------------------------------------------------------------
@@ -510,10 +601,15 @@ def _cache_hit(owner: str, repo: str, sha: str, branch: str, description: str) -
 
 @app.get("/api/health")
 def health() -> dict:
+    from local_index import stats as local_index_stats
+
     return {
         "status": "ok",
         "storage_configured": bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_BUCKET")),
         "auth_configured": bool(os.getenv("SUPABASE_JWKS_URL")),
+        "sessions": session_registry.stats(),
+        "shared_index": shared_index_stats(),
+        "local_index": local_index_stats(),
     }
 
 
@@ -592,6 +688,149 @@ async def loadrepo(payload: LoadRepoRequest, authorization: str = Header(default
                 result["file_count"],
             )
             return LoadRepoResponse(**result)
+
+
+# ---------------------------------------------------------------------------
+# Question answering
+# ---------------------------------------------------------------------------
+
+
+def _resolve_query_target(user_id: str, payload: UserQueryRequest) -> tuple[str, str]:
+    """Decide which repository@commit the question is about.
+
+    The user id always comes from the verified bearer token — never from the
+    body — so one user cannot address another's session.
+
+    Resolution order:
+        1. repo_name + sha given  -> use them.
+        2. repo_name only         -> the user's live session for that repo if
+                                     one exists, else its most recent stored sha.
+        3. neither                -> the user's single live session.
+    """
+    repo_name = (payload.repo_name or "").strip().strip("/")
+    sha = (payload.sha or "").strip()
+
+    if repo_name and sha:
+        return repo_name, sha
+
+    if repo_name:
+        live = session_registry.find_handle(user_id, repo_name, sha)
+        if live is not None:
+            return live.repo_name, live.sha
+
+        from repo_storage import split_repo
+
+        owner, repo = split_repo(repo_name)
+        known = stored_shas(owner, repo)
+        if not known:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{repo_name} has no stored index. Connect it from /get-started first.",
+            )
+        return repo_name, known[0]
+
+    handles = session_registry.handles_for_user(user_id)
+    if not handles:
+        raise HTTPException(
+            status_code=422,
+            detail="No repository connected. Connect one from /get-started before asking a question.",
+        )
+    if len(handles) > 1:
+        names = ", ".join(sorted({h.repo_name for h in handles}))
+        raise HTTPException(
+            status_code=422,
+            detail=f"Several repositories are connected ({names}). Specify which one to query.",
+        )
+    return handles[0].repo_name, handles[0].sha
+
+
+def _query_error_detail(exc: Exception) -> str:
+    """A message safe to return to the browser.
+
+    Storage and filesystem exceptions carry local temp paths and signed URLs;
+    neither belongs in a response, so only validation errors echo their text.
+    The full detail is logged separately (the callers log.exception).
+    """
+    if isinstance(exc, FileNotFoundError):
+        return "That repository's index is no longer available. Reconnect it from /get-started."
+    if isinstance(exc, ValueError):
+        return str(exc)
+    return "An unexpected server error occurred. Try again in a moment."
+
+
+_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+
+
+def _cap_error_text(error: str) -> str:
+    """Trim a model/provider error for display: first line, no URLs, capped."""
+    text = (error or "").strip()
+    if not text:
+        return text
+    text = text.splitlines()[0].strip()
+    text = _URL_RE.sub("…", text)
+    if len(text) > 200:
+        text = text[:197] + "..."
+    return text
+
+
+@app.post("/api/userquery", response_model=UserQueryResponse)
+async def userquery(payload: UserQueryRequest, authorization: str = Header(default="")) -> UserQueryResponse:
+    """Answer a question about an already-indexed repository.
+
+    Every stage that can block — downloading the index, parsing 50MB of JSON,
+    building the REPL, and the query itself (up to `max_timeout=240s`) — runs
+    in a worker thread, so the event loop keeps serving other requests.
+
+    Failures split by where they happen:
+      - before/around routing (unknown repo, missing index) -> 4xx/5xx status;
+      - inside the answer itself (model error, exhausted budget) -> 200 with
+        `error` populated, so the caller still gets the tier and timing.
+    """
+    user_id = verify_bearer_token(authorization)
+
+    repo_name, sha = _resolve_query_target(user_id, payload)
+    log.info("[query] %s asking %s@%s", user_id or "anonymous", repo_name, sha[:12])
+
+    try:
+        handle = await session_registry.get_or_create(user_id, repo_name, sha)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=_query_error_detail(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except Exception as e:
+        log.exception("[query] session setup failed for %s@%s", repo_name, sha[:12])
+        raise HTTPException(status_code=502, detail=_query_error_detail(e)) from e
+
+    started = time.monotonic()
+    try:
+        result = await handle.ask(payload.question)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=_query_error_detail(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except Exception as e:
+        log.exception("[query] %s@%s failed", repo_name, sha[:12])
+        raise HTTPException(status_code=502, detail=_query_error_detail(e)) from e
+
+    error = _cap_error_text(result.error) or None
+    print(result.answer)
+    return UserQueryResponse(
+        answer=result.answer or "",
+        tier=result.tier,
+        reason=result.reason,
+        answer_source=result.answer_source,
+        evidence_paths=result.evidence_paths,
+        repo_name=repo_name,
+        sha=sha,
+        elapsed_seconds=result.elapsed_seconds or (time.monotonic() - started),
+        direct_calls=result.direct_calls,
+        direct_input_tokens=result.direct_input_tokens,
+        direct_output_tokens=result.direct_output_tokens,
+        rlm_input_tokens=result.rlm_input_tokens,
+        rlm_output_tokens=result.rlm_output_tokens,
+        rlm_iterations=result.rlm_iterations,
+        error=error,
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -7,7 +7,7 @@ from typing import Optional
 
 from rlm import RLM
 from rlm.clients import get_client
-from rlm_config import ai_api_key
+from rlm_config import DEFAULT_MODEL, ai_api_key
 from session_index import (
     acquire_session,
     close_session,
@@ -17,11 +17,6 @@ from session_index import (
     resolve_session_paths,
     set_default_session_id,
 )
-
-# "nvidia/nemotron-3.5-lightning:free"
-# "inclusionai/ling-3.0-flash-sante:free"
-
-DEFAULT_MODEL = "dots-studio/dots-3-note-preview:free"
 
 GAUGE_MAX_OUTPUT_TOKENS = 4096
 DIRECT_BUDGET_CHARS = 60_000

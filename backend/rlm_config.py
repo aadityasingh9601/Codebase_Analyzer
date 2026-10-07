@@ -19,7 +19,12 @@ LIGHTWEIGHT_JSON_ABS = LIGHTWEIGHT_JSON_PATH
 
 ai_api_key: str = os.getenv("AI_API_KEY")
 
-DEFAULT_MODEL = "inclusionai/ling-3.0-flash-sante:free"
+# Single source of truth for the RLM + direct-LLM model. Every consumer
+# (query_router, session_registry, create_rlm's own default) resolves this one
+# constant, so changing the model here and restarting the server is all it takes.
+# "nvidia/nemotron-3.5-lightning:free"
+# "inclusionai/ling-3.0-flash-sante:free"
+DEFAULT_MODEL = "dots-studio/dots-3-note-preview:free"
 
 
 def guess_light_path(full_json_path: str) -> str:

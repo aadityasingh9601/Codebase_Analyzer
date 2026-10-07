@@ -36,6 +36,7 @@ from typing import Optional
 
 import session_index
 from session_index import close_session, set_default_session_id, reset_default_session_id
+from rlm_config import DEFAULT_MODEL
 
 # Hard cap on queries making model calls at once. Not about traffic volume —
 # the app is new — but each RLM completion can hold a thread for up to
@@ -51,10 +52,6 @@ RLM_IDLE_SECONDS = 600
 INDEX_IDLE_SECONDS = 3600
 
 MAX_SESSIONS = 32
-
-# "dots-studio/dots-3-note-preview:free"
-# "inclusionai/ling-3.0-flash-sante:free"
-DEFAULT_MODEL = "dots-studio/dots-3-note-preview:free"
 
 _query_slots: Optional[asyncio.Semaphore] = None
 

@@ -22,7 +22,7 @@ export function AppShell({
   repo?: { slug: string } | null;
 }) {
   return (
-    <div className="flex min-h-full flex-1 flex-col">
+    <div className="fixed inset-0 flex flex-col overflow-hidden">
       <header className="sticky top-0 z-30 border-b border-border-base bg-background/85 backdrop-blur-md">
         <div className="mx-auto flex h-14 w-full max-w-[1180px] items-center gap-3 px-5">
           <Link

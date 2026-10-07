@@ -238,12 +238,22 @@ def parse_repo(repo_dir: str, output_dir: str, description: str = "") -> tuple:
     return full_json, light_json
 
 
-def upload_to_supabase(full_json: str, light_json: str, repo_name: str, sha: str = "") -> bool:
+def upload_to_supabase(
+    full_json: str,
+    light_json: str,
+    repo_name: str,
+    sha: str = "",
+    user_id: str = "",
+) -> bool:
     """Upload the generated codebase JSON files to the Supabase storage bucket.
 
     Bucket + paths (see repo_storage):
         repo-contexts/{owner}/{repo}/{sha}/codebase.json
         repo-contexts/{owner}/{repo}/{sha}/codebase_lightweight.json
+
+    When `user_id` is given the files land under `{user_id}/...`, keeping the
+    index private to that one user (the web app always passes it; the CLI
+    scripts leave it empty for the unprefixed layout).
 
     `sha` is the commit the index was built from. If omitted it is read from
     the generated JSON's own "last_commit_sha".
@@ -261,8 +271,8 @@ def upload_to_supabase(full_json: str, light_json: str, repo_name: str, sha: str
         sha = resolve_sha(sha, full_json, light_json)
         owner, repo = split_repo(repo_name)
         for local_path, remote_path in (
-            (full_json, storage_path_json(owner, repo, sha)),
-            (light_json, storage_path_light_json(owner, repo, sha)),
+            (full_json, storage_path_json(owner, repo, sha, user_id)),
+            (light_json, storage_path_light_json(owner, repo, sha, user_id)),
         ):
             upload(local_path, remote_path, "application/json")
             print(f"Uploaded -> {BUCKET}/{remote_path}")

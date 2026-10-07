@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
+import { RepoSidebar } from "@/components/repo-sidebar";
 import { CopyIcon, CheckIcon, SendIcon, SpinnerIcon, FileIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { useSelectedRepo } from "@/hooks/use-selected-repo";
@@ -95,6 +96,18 @@ export function ChatView() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // The transcript belongs to whichever repo is selected: switching to another
+  // repository (from the sidebar, or a new upload on /get-started) starts a new
+  // thread for it instead of asking about two codebases in one conversation.
+  const activeRepoSlug = useRef(repo?.slug ?? null);
+  useEffect(() => {
+    const slug = repo?.slug ?? null;
+    if (slug !== activeRepoSlug.current) {
+      activeRepoSlug.current = slug;
+      setMessages(initialMessages(repo));
+    }
+  }, [repo]);
+
   // Pin to the newest message. Smooth scrolling would fight the streaming
   // updates, so jump instantly while a reply is coming in.
   useEffect(() => {
@@ -129,7 +142,7 @@ export function ChatView() {
     setInput("");
     setResponding(true);
 
-    const result = await askQuestion(content, repo.slug, repo.sha);
+    const result = await askQuestion(content, repo.slug);
 
     setMessages((prev) =>
       prev.map((m) => {
@@ -159,124 +172,127 @@ export function ChatView() {
 
   return (
     <AppShell repo={repo}>
-      <div className="flex min-h-0 flex-1 flex-col">
-        <div
-          ref={scrollRef}
-          className="scroll-slim min-h-0 flex-1 overflow-y-auto"
-          aria-live="polite"
-        >
-          <div className="mx-auto w-full max-w-[820px] px-5 py-8">
-            {repo ? (
-              <div className="mb-7 flex items-center justify-between gap-3 rounded-xl border border-border-base bg-surface-subtle px-4 py-3">
-                <div className="min-w-0">
-                  <p className="text-[11px] font-medium uppercase tracking-[0.07em] text-muted">
-                    Connected repository
+      <div className="flex min-h-0 flex-1">
+        <RepoSidebar />
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div
+            ref={scrollRef}
+            className="scroll-slim min-h-0 flex-1 overflow-y-auto"
+            aria-live="polite"
+          >
+            <div className="mx-auto w-full max-w-[820px] px-5 py-8">
+              {repo ? (
+                <div className="mb-7 flex items-center justify-between gap-3 rounded-xl border border-border-base bg-surface-subtle px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-medium uppercase tracking-[0.07em] text-muted">
+                      Connected repository
+                    </p>
+                    <a
+                      href={repo.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block truncate font-mono text-[13.5px] text-foreground underline-offset-4 hover:underline"
+                    >
+                      {repo.slug}
+                    </a>
+                    <IndexedFacts repo={repo} />
+                  </div>
+                  <Button type="button" size="sm" variant="secondary" onClick={handleChangeRepo}>
+                    Change
+                  </Button>
+                </div>
+              ) : (
+                <div className="mb-7 flex items-center justify-between gap-3 rounded-xl border border-dashed border-border-strong bg-surface-subtle px-4 py-3">
+                  <p className="text-[13px] text-muted">
+                    No repository connected yet — pick one to get grounded answers.
                   </p>
                   <a
-                    href={repo.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="block truncate font-mono text-[13.5px] text-foreground underline-offset-4 hover:underline"
+                    href="/get-started"
+                    className="shrink-0 rounded-lg bg-accent px-3 py-1.5 text-[13px] font-medium text-accent-foreground transition-[filter] hover:brightness-110"
                   >
-                    {repo.slug}
+                    Connect repo
                   </a>
-                  <IndexedFacts repo={repo} />
                 </div>
-                <Button type="button" size="sm" variant="secondary" onClick={handleChangeRepo}>
-                  Change
+              )}
+
+              <div className="space-y-7">
+                {messages.map((m) => (
+                  <MessageBubble key={m.id} message={m} />
+                ))}
+              </div>
+
+              {repo && !responding && messages.length <= 2 ? (
+                <div className="mt-9">
+                  <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.07em] text-muted">
+                    Try asking
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {SUGGESTIONS.map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => send(s)}
+                        className="rounded-full border border-border-base bg-surface px-3.5 py-1.5 text-[13px] text-muted transition-[background-color,border-color,color] hover:border-border-strong hover:bg-surface-subtle hover:text-foreground"
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="border-t border-border-base bg-background/85 backdrop-blur-md">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                send(input);
+              }}
+              className="mx-auto w-full max-w-[820px] px-5 py-4"
+            >
+              <div className="flex items-end gap-2.5 rounded-2xl border border-border-base bg-surface p-2 shadow-[0_1px_2px_rgba(0,0,0,0.04)] focus-within:border-accent focus-within:ring-4 focus-within:ring-accent/12">
+                <textarea
+                  ref={textareaRef}
+                  rows={1}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    // Enter sends; Shift+Enter inserts a newline.
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      send(input);
+                    }
+                  }}
+                  placeholder={
+                    repo
+                      ? `Ask anything about ${repo.slug}…`
+                      : "Connect a repository to start asking…"
+                  }
+                  disabled={responding || !repo}
+                  className="scroll-slim max-h-[200px] min-h-[38px] flex-1 resize-none bg-transparent px-2.5 py-2 text-[14px] leading-relaxed text-foreground outline-none placeholder:text-muted/70 disabled:opacity-60"
+                />
+                <Button
+                  type="submit"
+                  size="md"
+                  disabled={responding || !repo || !input.trim()}
+                  className="h-[38px] w-[38px] shrink-0 rounded-xl p-0"
+                  aria-label="Send message"
+                >
+                  {responding ? (
+                    <SpinnerIcon className="h-4 w-4" />
+                  ) : (
+                    <SendIcon className="h-4 w-4" />
+                  )}
                 </Button>
               </div>
-            ) : (
-              <div className="mb-7 flex items-center justify-between gap-3 rounded-xl border border-dashed border-border-strong bg-surface-subtle px-4 py-3">
-                <p className="text-[13px] text-muted">
-                  No repository connected yet — pick one to get grounded answers.
-                </p>
-                <a
-                  href="/get-started"
-                  className="shrink-0 rounded-lg bg-accent px-3 py-1.5 text-[13px] font-medium text-accent-foreground transition-[filter] hover:brightness-110"
-                >
-                  Connect repo
-                </a>
-              </div>
-            )}
-
-            <div className="space-y-7">
-              {messages.map((m) => (
-                <MessageBubble key={m.id} message={m} />
-              ))}
-            </div>
-
-            {repo && !responding && messages.length <= 2 ? (
-              <div className="mt-9">
-                <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.07em] text-muted">
-                  Try asking
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {SUGGESTIONS.map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => send(s)}
-                      className="rounded-full border border-border-base bg-surface px-3.5 py-1.5 text-[13px] text-muted transition-[background-color,border-color,color] hover:border-border-strong hover:bg-surface-subtle hover:text-foreground"
-                    >
-                      {s}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : null}
+              <p className="mt-2 px-1 text-[11.5px] text-muted">
+                {repo
+                  ? `Enter to send · Shift+Enter for a new line. Answers cite the files they used.`
+                  : "Connect a repository on /get-started, then this chat reads only its code."}
+              </p>
+            </form>
           </div>
-        </div>
-
-        <div className="border-t border-border-base bg-background/85 backdrop-blur-md">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              send(input);
-            }}
-            className="mx-auto w-full max-w-[820px] px-5 py-4"
-          >
-            <div className="flex items-end gap-2.5 rounded-2xl border border-border-base bg-surface p-2 shadow-[0_1px_2px_rgba(0,0,0,0.04)] focus-within:border-accent focus-within:ring-4 focus-within:ring-accent/12">
-              <textarea
-                ref={textareaRef}
-                rows={1}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  // Enter sends; Shift+Enter inserts a newline.
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    send(input);
-                  }
-                }}
-                placeholder={
-                  repo
-                    ? `Ask anything about ${repo.slug}…`
-                    : "Connect a repository to start asking…"
-                }
-                disabled={responding || !repo}
-                className="scroll-slim max-h-[200px] min-h-[38px] flex-1 resize-none bg-transparent px-2.5 py-2 text-[14px] leading-relaxed text-foreground outline-none placeholder:text-muted/70 disabled:opacity-60"
-              />
-              <Button
-                type="submit"
-                size="md"
-                disabled={responding || !repo || !input.trim()}
-                className="h-[38px] w-[38px] shrink-0 rounded-xl p-0"
-                aria-label="Send message"
-              >
-                {responding ? (
-                  <SpinnerIcon className="h-4 w-4" />
-                ) : (
-                  <SendIcon className="h-4 w-4" />
-                )}
-              </Button>
-            </div>
-            <p className="mt-2 px-1 text-[11.5px] text-muted">
-              {repo
-                ? `Enter to send · Shift+Enter for a new line. Answers cite the files they used.`
-                : "Connect a repository on /get-started, then this chat reads only its code."}
-            </p>
-          </form>
         </div>
       </div>
     </AppShell>

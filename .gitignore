@@ -6,6 +6,8 @@
 **/next-env.d.ts
 **/logs
 backend/rlm_sessions
+backend/tests
+backend/*.sql
 **/*.pdf
 **/venv
 **/__pycache__

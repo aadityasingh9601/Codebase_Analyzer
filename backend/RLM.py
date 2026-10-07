@@ -31,7 +31,7 @@ print(f"Size of LIGHTWEIGHT json file {json_file_size / 10**6} MB")
 # poolside/laguna-s-2.1:free
 # nvidia/nemotron-3.5-lightning:free
 # inclusionai/ling-3.0-flash-sante:free
-
+# dots-studio/dots-3-note-preview:free
 
 # with open(LIGHTWEIGHT_JSON_PATH, "r") as f:
 #     lightweight_data = json.load(f)

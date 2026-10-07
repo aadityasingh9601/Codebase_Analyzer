@@ -9,13 +9,19 @@ from rlm import RLM
 from rlm.clients import get_client
 from rlm_config import ai_api_key
 from session_index import (
+    acquire_session,
     close_session,
     current_session,
     current_session_id,
+    reset_default_session_id,
     resolve_session_paths,
+    set_default_session_id,
 )
 
-DEFAULT_MODEL = "inclusionai/ling-3.0-flash-sante:free"
+# "nvidia/nemotron-3.5-lightning:free"
+# "inclusionai/ling-3.0-flash-sante:free"
+
+DEFAULT_MODEL = "dots-studio/dots-3-note-preview:free"
 
 GAUGE_MAX_OUTPUT_TOKENS = 4096
 DIRECT_BUDGET_CHARS = 60_000
@@ -403,3 +409,45 @@ def _create_default_rlm() -> RLM:
         light_json_path=light_path,
         session_id=current_session_id(),
     )
+
+
+def answer_for_session(
+    session_id: str,
+    full_json_path: str,
+    light_json_path: str,
+    question: str,
+) -> RouterResult:
+    """Answer `question` for one self-contained, per-user session.
+
+    The HTTP endpoint's whole per-query flow: parse the index, build a fresh
+    RLM for it, route the question, and tear everything down before returning.
+    There is no registry, no reuse and nothing shared across users or
+    requests — the caller hands us the paths to one user's private index files
+    and a session id under that user's namespace.
+
+    Call from a worker thread when the event loop must stay responsive.
+    """
+    from rlm_config import create_rlm
+
+    token = set_default_session_id(session_id)
+    rlm = None
+    try:
+        # Pin the parsed index for this session (cheap, ref-counted — later
+        # RLM helper calls resolve the same parse). Must happen before the RLM
+        # is built: `create_rlm(...).init_env()` runs setup_code that defines
+        # `context` over this index's session.
+        acquire_session(session_id, full_json_path, light_json_path)
+        rlm = create_rlm(
+            full_json_path=full_json_path,
+            light_json_path=light_json_path,
+            session_id=session_id,
+        )
+        return route_and_answer(question, rlm=rlm)
+    finally:
+        reset_default_session_id(token)
+        if rlm is not None:
+            try:
+                rlm.close()
+            except Exception:
+                pass
+        close_session(session_id)

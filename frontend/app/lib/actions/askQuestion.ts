@@ -7,15 +7,20 @@ import { getAuthHeaders, getBackendUrl } from "@/lib/utils/getSession";
  *
  * Runs on the server so the Supabase service-role credentials stay there and
  * the caller's session token travels server-to-server, mirroring
- * `loadGithubRepo`. The backend keeps one reasoning session per (user, repo,
- * commit) and answers by reading the shared in-memory index, so no state is
- * expected on the browser side beyond the caller's selected repo.
+ * `loadGithubRepo`.
+ *
+ * Repositories are PRIVATE to the user who uploaded them, and there is no
+ * server-side session to reuse: each query downloads the user's own index into
+ * a temp file, builds a fresh RLM, answers, and tears everything down. The
+ * browser only needs to send the question and the selected `owner/repo` — the
+ * backend reads the indexed commit from its own `repos` table and ignores any
+ * sha the client might believe in.
  *
  * The backend answers non-streamingly (Phase 1 scope): the whole answer arrives
  * once, with the file paths it drew on, so the UI shows a loading state while
  * this is in flight rather than a token stream.
  *
- * The API can take a long time on a cold index (downloads the repo JSON from
+ * The API can take a long time (downloads up to 50 MB of repo JSON from
  * storage into a temp file before the model can read it), so the timeout is
  * generous. A failure here is a real failure, not a slow answer.
  */
@@ -44,13 +49,12 @@ export type AskResult =
   | { ok: false; error: string };
 
 /**
- * Ask about `repoName` (owner/repo) at `sha`. Omit `sha` to use the commit the
- * backend already indexed for that repository.
+ * Ask about `repoName` (owner/repo). The repo must be one of the caller's own
+ * connected repositories; the backend answers against the commit it indexed.
  */
 export async function askQuestion(
   question: string,
   repoName?: string,
-  sha?: string,
 ): Promise<AskResult> {
   if (!repoName) {
     // Guard against the no-repo chat; the UI disables asking, but a stray call
@@ -81,7 +85,7 @@ export async function askQuestion(
     response = await fetch(`${getBackendUrl()}/api/userquery`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ question, repo_name: repoName, sha: sha || undefined }),
+      body: JSON.stringify({ question, repo_name: repoName }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
       // The query can take minutes; do not let Next's fetch fail first.
       cache: "no-store",
@@ -97,7 +101,6 @@ export async function askQuestion(
   }
 
   const payload = await readJson(response);
-  console.log(payload);
 
   if (!response.ok) {
     return { ok: false, error: errorFrom(payload, response.status) };

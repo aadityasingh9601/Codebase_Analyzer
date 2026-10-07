@@ -7,14 +7,15 @@ stop duplicating Supabase client logic.
 
 Remote layout (bucket: env SUPABASE_BUCKET, default "repo-contexts"):
 
-    {owner}/{repo}/{sha}/codebase.json
-    {owner}/{repo}/{sha}/codebase_lightweight.json
-    {owner}/{repo}/{sha}/users/{user_id}.dill
+    {owner}/{repo}/{sha}/codebase.json                    (server-less/CLI use)
+    {user_id}/{owner}/{repo}/{sha}/codebase.json          (server use)
 
-The commit SHA is part of the path, so two users on the same repo but at
-different commits never read each other's context. Everything under a given SHA
-belongs to that one commit of that one repo and can be shared; only the .dill
-is per-user.
+A repository uploaded by the web app is PRIVATE to the user who uploaded it:
+the user's id is the first path segment, and every access goes through the
+backend, which verifies the caller is that user before touching storage. Two
+people uploading the same repo keep two completely separate copies; nothing is
+shared between users. The CLI scripts pass no user_id and keep using the
+unprefixed layout.
 
 Usage:
     from repo_storage import (
@@ -23,9 +24,9 @@ Usage:
     )
 
     owner, repo = split_repo("calcom/cal.diy")
-    upload("codebase_cal.diy.json", storage_path_json(owner, repo, sha))
+    upload("codebase_cal.diy.json", storage_path_json(owner, repo, sha, user_id))
     stream_download(storage_path_dill(owner, repo, sha, "user123"), "user123.dill")
-    delete(storage_path_json(owner, repo, sha))
+    delete(storage_path_json(owner, repo, sha, user_id))
 """
 
 import os
@@ -84,26 +85,53 @@ def _dill_name(user_id: str) -> str:
     return name
 
 
-def storage_path_prefix(owner: str, repo: str, sha: str) -> str:
-    """Remote folder holding every artifact for one repo at one commit."""
-    return "/".join((_norm_part(owner, "owner"), _norm_part(repo, "repo"), _norm_sha(sha)))
+def _norm_user(user_id: str) -> str:
+    """Sanitize a user id for use as a storage path segment. Empty means
+    anonymous/CLI use, in which case there is no per-user prefix."""
+    value = (user_id or "").strip().strip("/")
+    if not value:
+        return ""
+    if ".." in value or "/" in value or value in (".", ".."):
+        raise ValueError(f"Invalid user_id: {user_id!r}")
+    return value
 
 
-def storage_path_json(owner: str, repo: str, sha: str) -> str:
-    return f"{storage_path_prefix(owner, repo, sha)}/codebase.json"
+def storage_path_prefix(owner: str, repo: str, sha: str, user_id: str = "") -> str:
+    """Remote folder holding every artifact for one repo at one commit.
+
+    When `user_id` is given the folder is nested under it, scoping the index
+    to that one user. Without it (CLI scripts, anonymous dev) the folder is
+    unprefixed.
+    """
+    prefix = "/".join((_norm_part(owner, "owner"), _norm_part(repo, "repo"), _norm_sha(sha)))
+    user = _norm_user(user_id)
+    return f"{user}/{prefix}" if user else prefix
 
 
-def storage_path_light_json(owner: str, repo: str, sha: str) -> str:
-    return f"{storage_path_prefix(owner, repo, sha)}/codebase_lightweight.json"
+def storage_path_json(owner: str, repo: str, sha: str, user_id: str = "") -> str:
+    return f"{storage_path_prefix(owner, repo, sha, user_id)}/codebase.json"
+
+
+def storage_path_light_json(owner: str, repo: str, sha: str, user_id: str = "") -> str:
+    return f"{storage_path_prefix(owner, repo, sha, user_id)}/codebase_lightweight.json"
 
 
 def storage_path_dill(owner: str, repo: str, sha: str, user_id: str) -> str:
+    # The dill is already scoped per user via the users/<id>.dill segment, so it
+    # intentionally does NOT take the user_id path prefix that codebase indexes
+    # do: the CLI scripts own this layout.
     return f"{storage_path_prefix(owner, repo, sha)}/users/{_dill_name(user_id)}"
 
 
-def list_shas(owner: str, repo: str, bucket: str = "") -> list:
-    """List the commit SHAs that have a stored context for this repo."""
+def list_shas(owner: str, repo: str, bucket: str = "", user_id: str = "") -> list:
+    """List the commit SHAs that have a stored context for this repo.
+
+    With a `user_id` this only looks under that user's private prefix.
+    """
+    user = _norm_user(user_id)
     prefix = "/".join((_norm_part(owner, "owner"), _norm_part(repo, "repo")))
+    if user:
+        prefix = f"{user}/{prefix}"
     seen = []
     for obj in _client(bucket).list(prefix + "/", options={"limit": 1000}):
         name = (obj.get("name") or "").strip("/")

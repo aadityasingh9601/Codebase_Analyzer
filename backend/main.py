@@ -2,53 +2,56 @@
 main.py — HTTP API for RepoChat.
 
     POST /api/loadrepo   index a GitHub repository and store it in Supabase
-    POST /api/userquery  answer a question about an indexed repository
-    GET  /api/health     liveness probe + live session/index stats
+    GET  /api/repos      metadata for the caller's uploaded repositories
+    POST /api/userquery  answer a question about one of those repositories
+    GET  /api/health     liveness probe
 
-`POST /api/loadrepo` is the only endpoint the frontend needs to go from a pasted
-URL to a chat session. It runs the same three steps the scripts do by hand:
+Repositories are PRIVATE to the user who uploaded them. When the web app
+indexes a repo it lands in the storage bucket under `{user_id}/owner/repo/sha/`
+and a metadata row is written to the `repos` table (see supabase_repos_table.sql).
+Every later read goes through the same owner check: the row is looked up by
+`user_id` + `repo_name`, and only that user's storage prefix is ever touched.
+Two people uploading the same GitHub repo get two independent copies; nothing
+is shared between users.
 
-    1. look up whether this repo at this commit is already indexed
-       (repo_storage.list_shas — a real query against the storage bucket)
-    2. if not, shallow-clone it           (fetch_github_repo.clone_repo)
-    3. parse it into the two codebase JSONs and upload both
-       (parse_github_repo.parse_repo + upload_to_supabase)
+Limits (constants at the bottom of the header section):
+    * MAX_REPOS_PER_USER = 2     — a user can upload at most two repositories.
+    * MAX_FULL_JSON_MB   = 50    — parsed index cap, enforced before upload.
 
-The response carries the resolved `repo_name`, commit `sha`, `branch` and file
-count so the frontend can show what it actually got instead of a placeholder.
+`POST /api/loadrepo` runs the pipeline the scripts do by hand:
 
-`POST /api/userquery` picks the user's live session for a repository, downloads
-its index into a temp directory if it is not resident yet, parses it once (shared
-across users on that repo), and runs `query_router.route_and_answer`. Routed
-either by a cheap direct model call or, when the question needs real analysis,
-by an RLM running a Python REPL against the index.
+    1. check the caller's own `repos` row for this repo at the latest commit
+       (cache hit — reuse their stored index, nothing is rebuilt)
+    2. otherwise shallow-clone and parse it into the two codebase JSONs
+    3. enforce the 50 MB cap, upload both under the user's private prefix,
+       and upsert the metadata row.
 
-Everything before the clone is a fast check; the clone and parse are slow and
-blocking (up to minutes on a large repo), so they run in a worker thread and
-the event loop stays free to serve other requests.
+`POST /api/userquery` is self-contained per query. The index files are
+downloaded into a temp directory, parsed, a fresh RLM is built for them, the
+question is routed (cheap direct model call, or the RLM for real analysis),
+and everything is closed and deleted before returning. No sessions are cached
+across requests.
 
 Auth: callers send the Supabase access token as `Authorization: Bearer <jwt>`,
 the same token the browser holds. It is verified against the project's JWKS, so
 the endpoint is not open to anyone. Set `SUPABASE_JWKS_URL` in the environment
-to enable that; with it unset the endpoint is anonymous (handy for curl during
+to enable that; with it unset the user id is empty (handy for curl during
 development, unsafe in production — every anonymous caller then shares one
-session per repository).
+"user" and one quota).
 
 Usage:
     uvicorn main:app --port 8000
     python main.py --port 8000 --reload
 
 Environment (see backend/.env):
-    SUPABASE_URL, SUPABASE_SECRET_KEY, SUPABASE_BUCKET  for storage
+    SUPABASE_URL, SUPABASE_SECRET_KEY, SUPABASE_BUCKET  for storage + repos table
     SUPABASE_JWKS_URL                                  for token verification
     GITHUB_TOKEN                                       optional, raises API rate limits
     MAX_CONCURRENT_INDEXES                             concurrent clone+parse jobs
-    JANITOR_INTERVAL_SECONDS                           idle-session sweep period
 """
 
 import argparse
 import asyncio
-import contextlib
 import json
 import logging
 import os
@@ -64,7 +67,6 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
-from contextlib import asynccontextmanager
 
 # The pipeline modules live beside this file as flat scripts. Inserting the
 # directory keeps `import fetch_github_repo` working no matter which cwd the
@@ -82,64 +84,58 @@ from parse_github_repo import (  # noqa: E402
     upload_to_supabase,
 )
 from repo_storage import (  # noqa: E402
+    MAX_FULL_JSON_MB,
     check_size_limit,
-    list_shas,
+    delete,
+    split_repo,
     storage_path_json,
+    storage_path_light_json,
 )
-import session_registry  # noqa: E402
-from session_index import shared_index_stats  # noqa: E402
+import query_router  # noqa: E402
 
 log = logging.getLogger("repochat")
 
-# How often the janitor wakes up to free idle sessions and index files.
-# This is the poll interval, NOT the expiry: an entry is only reclaimed after
-# RLM_IDLE_SECONDS / INDEX_IDLE_SECONDS with no use. Polling can be frequent
-# because it is cheap; the TTL is what bounds memory.
-JANITOR_INTERVAL_SECONDS = int(os.getenv("JANITOR_INTERVAL_SECONDS", "60"))
-
-
-async def _janitor_loop() -> None:
-    """Periodically reclaim idle RLMs, parsed indexes, and their temp files."""
-    while True:
-        await asyncio.sleep(JANITOR_INTERVAL_SECONDS)
-        try:
-            evicted = await run_in_threadpool(session_registry.evict_idle)
-            if evicted:
-                log.info("janitor evicted %d idle session(s)", len(evicted))
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            log.exception("janitor sweep failed")
-
-
-@asynccontextmanager
-async def _lifespan(app: FastAPI):
-    janitor = asyncio.create_task(_janitor_loop())
-    try:
-        yield
-    finally:
-        janitor.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await janitor
-        try:
-            await run_in_threadpool(session_registry.cleanup_all)
-        except Exception:
-            log.exception("shutdown cleanup failed")
-
-
-app = FastAPI(
-    title="RepoChat API",
-    version="1.0.0",
-    description="Indexes GitHub repositories so the chat can answer from real source.",
-    lifespan=_lifespan,
-)
+# A user's repositories are private to them, and the sidebar lists them; cap
+# how many one user can keep so the free quota is not a bottomless bucket.
+MAX_REPOS_PER_USER = 2
 
 # Cloning is disk- and network-heavy. More than a couple at once makes a
 # laptop thrash without finishing any faster.
 MAX_CONCURRENT_INDEXES = int(os.getenv("MAX_CONCURRENT_INDEXES", "2"))
 
+# Replies are bounded the same way for the same reason: each query builds an
+# RLM and makes model calls, and unbounded concurrency would exhaust the
+# threadpool and trip the provider's rate limit.
+MAX_CONCURRENT_QUERIES = 4
+
 _slots: asyncio.Semaphore | None = None
+_query_slots: asyncio.Semaphore | None = None
 _repo_locks: dict[str, asyncio.Lock] = {}
+
+
+def _index_semaphore() -> asyncio.Semaphore:
+    global _slots
+    if _slots is None:
+        # Created here rather than at import so it binds to the running loop.
+        _slots = asyncio.Semaphore(MAX_CONCURRENT_INDEXES)
+    return _slots
+
+
+def _query_semaphore() -> asyncio.Semaphore:
+    global _query_slots
+    if _query_slots is None:
+        _query_slots = asyncio.Semaphore(MAX_CONCURRENT_QUERIES)
+    return _query_slots
+
+
+app = FastAPI(
+    title="RepoChat API",
+    version="2.0.0",
+    description=(
+        "Indexes GitHub repositories for the signed-in user who uploaded them. "
+        "Repositories are private per user; a user may keep at most two."
+    ),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +160,7 @@ class LoadRepoRequest(BaseModel):
     repo_url: str = Field(
         ...,
         description="GitHub repository URL or owner/repo.",
-        examples=["https://github.com/calcom/cal.diy", "calcom/cal.diy"],
+        examples=["https://github.com/pallets/click", "pallets/click"],
     )
     branch: str = Field(
         "main",
@@ -173,8 +169,8 @@ class LoadRepoRequest(BaseModel):
 
 
 class LoadRepoResponse(BaseModel):
-    repo_name: str = Field(..., examples=["calcom/cal.diy"])
-    url: str = Field(..., examples=["https://github.com/calcom/cal.diy"])
+    repo_name: str = Field(..., examples=["pallets/click"])
+    url: str = Field(..., examples=["https://github.com/pallets/click"])
     sha: str = Field(..., description="Commit that was indexed.")
     branch: str = Field(..., examples=["main"])
     file_count: int = Field(..., description="Files in the index.")
@@ -185,8 +181,27 @@ class LoadRepoResponse(BaseModel):
         description="True when this exact commit was already indexed and nothing was rebuilt.",
     )
     storage_path: str = Field(
-        ..., description="Bucket path holding the index, for later retrieval."
+        ..., description="Bucket path holding the index, under the user's private prefix."
     )
+    repo_count: int = Field(0, description="How many repositories the user has now.")
+    repo_limit: int = Field(MAX_REPOS_PER_USER, description="Per-user repo limit.")
+
+
+class RepoInfo(BaseModel):
+    repo_name: str = Field(..., examples=["pallets/click"])
+    url: str = Field(..., examples=["https://github.com/pallets/click"])
+    branch: str = Field(..., examples=["main"])
+    sha: str = Field(..., description="Commit that was indexed.")
+    file_count: int = Field(0)
+    total_lines: int = Field(0)
+    description: str = Field("")
+    created_at: str = Field("", description="ISO timestamp of first upload.")
+    updated_at: str = Field("", description="ISO timestamp of last update.")
+
+
+class ListReposResponse(BaseModel):
+    repos: list[RepoInfo] = Field(default_factory=list)
+    repo_limit: int = Field(MAX_REPOS_PER_USER, description="Per-user repo limit.")
 
 
 class UserQueryRequest(BaseModel):
@@ -194,17 +209,13 @@ class UserQueryRequest(BaseModel):
         ...,
         min_length=1,
         max_length=4000,
-        description="Natural-language question about the connected repository.",
+        description="Natural-language question about one of your repositories.",
         examples=["How does the CLI parse command line options?"],
     )
     repo_name: str | None = Field(
         None,
-        description="owner/repo to query. Omit if the user has exactly one connected repository.",
+        description="owner/repo to query. Omit if you have exactly one connected repository.",
         examples=["pallets/click"],
-    )
-    sha: str | None = Field(
-        None,
-        description="Commit to query. Omit to use the connected repository's indexed commit.",
     )
 
 
@@ -370,7 +381,8 @@ def verify_bearer_token(authorization: str) -> str:
     """Verify the caller's Supabase access token and return their user id.
 
     Returns "" when token verification is not configured, so local development
-    against curl still works.
+    against curl still works (all anonymous callers then share one empty
+    user id and quota).
     """
     scheme, _, token = (authorization or "").partition(" ")
 
@@ -398,21 +410,81 @@ def verify_bearer_token(authorization: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Storage lookup
+# `repos` table (metadata only — the indexes live in storage)
 # ---------------------------------------------------------------------------
 
+REPOS_TABLE = "repos"
 
-def stored_shas(owner: str, repo: str) -> list[str]:
-    """Commit shas that already have an index in the bucket.
 
-    Returns [] on any failure: an unreachable bucket must not look like a cache
-    hit, it should just mean we rebuild.
+def _db():
+    """Supabase client for Postgres (repos table) — same creds as storage."""
+    from supabase import create_client
+
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_PUBLISHABLE_KEY")
+    if not url or not key:
+        raise RuntimeError("Supabase env vars missing")
+    return create_client(url, key)
+
+
+def _list_user_repos(user_id: str) -> list[dict]:
+    """All metadata rows for one user, oldest first."""
+    data = _db().table(REPOS_TABLE).select("*").eq("user_id", user_id).execute()
+    return list(data.data or [])
+
+
+def _get_user_repo(user_id: str, repo_name: str) -> dict | None:
+    """One user's metadata row for `repo_name`, or None.
+
+    Looking the row up by (user_id, repo_name) is the ownership check: a repo
+    that is not in this caller's rows is not this caller's repo.
     """
-    try:
-        return list_shas(owner, repo)
-    except Exception as e:
-        log.warning("Storage lookup failed for %s/%s: %s", owner, repo, e)
-        return []
+    data = (
+        _db()
+        .table(REPOS_TABLE)
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("repo_name", repo_name)
+        .limit(1)
+        .execute()
+    )
+    rows = list(data.data or [])
+    return rows[0] if rows else None
+
+
+def _count_user_repos(user_id: str) -> int:
+    # Rows are unique per (user_id, repo_name), so the row count is the repo count.
+    return len(_list_user_repos(user_id))
+
+
+def _upsert_repo(user_id: str, fields: dict) -> None:
+    """Insert or update one user's repo row (keyed by user_id + repo_name)."""
+    payload = {
+        "user_id": user_id,
+        "repo_name": fields["repo_name"],
+        "url": fields["url"],
+        "branch": fields["branch"],
+        "sha": fields["sha"],
+        "file_count": int(fields.get("file_count") or 0),
+        "total_lines": int(fields.get("total_lines") or 0),
+        "description": fields.get("description") or "",
+        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    _db().table(REPOS_TABLE).upsert(payload, on_conflict="user_id,repo_name").execute()
+
+
+def _repo_info(row: dict) -> RepoInfo:
+    return RepoInfo(
+        repo_name=row["repo_name"],
+        url=row["url"],
+        branch=row["branch"],
+        sha=row["sha"],
+        file_count=int(row.get("file_count") or 0),
+        total_lines=int(row.get("total_lines") or 0),
+        description=row.get("description") or "",
+        created_at=str(row.get("created_at") or ""),
+        updated_at=str(row.get("updated_at") or ""),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -465,6 +537,7 @@ def index_repository(
     repo: str,
     branch: str,
     description: str = "",
+    user_id: str = "",
 ) -> dict:
     """Clone, parse and upload. Returns the fields of LoadRepoResponse.
 
@@ -511,7 +584,7 @@ def index_repository(
             raise RepoTooLargeError(str(e)) from e
 
         log.info("[%s/%s] uploading %d files", owner, repo, file_count)
-        if not upload_to_supabase(full_json, light_json, resolved_name, sha):
+        if not upload_to_supabase(full_json, light_json, resolved_name, sha, user_id=user_id):
             raise IndexingError(
                 f"Indexed {file_count} files but could not store them. "
                 "The storage bucket rejected the upload."
@@ -533,7 +606,7 @@ def index_repository(
             "total_lines": total_lines,
             "description": description,
             "cached": False,
-            "storage_path": storage_path_json(owner, repo, sha),
+            "storage_path": storage_path_json(owner, repo, sha, user_id),
         }
     finally:
         # Always drop the clone: it is by far the largest thing here and is
@@ -555,20 +628,20 @@ def _summarize(light_json: str) -> tuple[int, int]:
     return len(metadata), total_lines
 
 
-def summarize_stored(owner: str, repo: str, sha: str) -> tuple[int, int]:
+def summarize_stored(user_id: str, owner: str, repo: str, sha: str) -> tuple[int, int]:
     """(file count, total lines) for an index already in the bucket.
 
     Pulls the lightweight index only — metadata, no file contents — so this
     stays cheap. A cache hit that reported "0 files" would be worse than no
     count at all, so it is worth the one small download.
     """
-    from repo_storage import storage_path_light_json, stream_download
+    from repo_storage import stream_download
 
     workdir = tempfile.mkdtemp(prefix="repochat-count-")
     local = os.path.join(workdir, "light.json")
 
     try:
-        stream_download(storage_path_light_json(owner, repo, sha), local)
+        stream_download(storage_path_light_json(owner, repo, sha, user_id), local)
         return _summarize(local)
     except Exception as e:
         log.warning("Could not read stored index for %s/%s@%s: %s", owner, repo, sha[:12], e)
@@ -577,9 +650,16 @@ def summarize_stored(owner: str, repo: str, sha: str) -> tuple[int, int]:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
-def _cache_hit(owner: str, repo: str, sha: str, branch: str, description: str) -> LoadRepoResponse:
-    """Response for a commit whose index is already stored."""
-    file_count, total_lines = summarize_stored(owner, repo, sha)
+def _cache_hit(
+    user_id: str,
+    owner: str,
+    repo: str,
+    sha: str,
+    branch: str,
+    description: str,
+) -> LoadRepoResponse:
+    """Response for a commit whose index is already stored for this user."""
+    file_count, total_lines = summarize_stored(user_id, owner, repo, sha)
 
     return LoadRepoResponse(
         repo_name=f"{owner}/{repo}",
@@ -590,8 +670,22 @@ def _cache_hit(owner: str, repo: str, sha: str, branch: str, description: str) -
         total_lines=total_lines,
         description=description,
         cached=True,
-        storage_path=storage_path_json(owner, repo, sha),
+        storage_path=storage_path_json(owner, repo, sha, user_id),
+        repo_count=_count_user_repos(user_id),
+        repo_limit=MAX_REPOS_PER_USER,
     )
+
+
+def _delete_stored_index(user_id: str, owner: str, repo: str, sha: str) -> None:
+    """Remove one commit's two index files from the bucket (best effort)."""
+    for remote in (
+        storage_path_json(owner, repo, sha, user_id),
+        storage_path_light_json(owner, repo, sha, user_id),
+    ):
+        try:
+            delete(remote)
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -601,25 +695,23 @@ def _cache_hit(owner: str, repo: str, sha: str, branch: str, description: str) -
 
 @app.get("/api/health")
 def health() -> dict:
-    from local_index import stats as local_index_stats
-
     return {
         "status": "ok",
         "storage_configured": bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_BUCKET")),
         "auth_configured": bool(os.getenv("SUPABASE_JWKS_URL")),
-        "sessions": session_registry.stats(),
-        "shared_index": shared_index_stats(),
-        "local_index": local_index_stats(),
+        "max_repos_per_user": MAX_REPOS_PER_USER,
+        "max_index_mb": MAX_FULL_JSON_MB,
     }
 
 
 @app.post("/api/loadrepo", response_model=LoadRepoResponse)
 async def loadrepo(payload: LoadRepoRequest, authorization: str = Header(default="")) -> LoadRepoResponse:
-    """Make a repository chat-ready: reuse its stored index, or build one.
+    """Make a repository the caller can chat with: reuse their stored index,
+    or build one. Repositories are private per user.
 
     Blocking work (clone + parse + upload) is pushed to a worker thread.
     """
-    verify_bearer_token(authorization)
+    user_id = verify_bearer_token(authorization)
 
     branch = (payload.branch or "main").strip() or "main"
 
@@ -628,18 +720,29 @@ async def loadrepo(payload: LoadRepoRequest, authorization: str = Header(default
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 
+    repo_name = f"{owner}/{repo}"
     meta = github_repo_meta(owner, repo)
     description = meta.get("description", "")
     branch = meta.get("default_branch") or branch
 
-    # The storage check comes first: the whole point is to avoid re-cloning a
-    # repo that is already indexed at this commit.
-    known = stored_shas(owner, repo)
+    # Private-per-user: the caller's own row decides both the limit and the
+    # cache. Someone else upload the same GitHub repo? Irrelevant here.
+    existing = _get_user_repo(user_id, repo_name)
+
+    if existing is None and _count_user_repos(user_id) >= MAX_REPOS_PER_USER:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"You can connect at most {MAX_REPOS_PER_USER} repositories. "
+                "Remove one from the sidebar before connecting another."
+            ),
+        )
+
     head_sha = github_head_sha(owner, repo, branch)
 
-    if head_sha and head_sha in known:
-        log.info("[%s/%s] cache hit at %s", owner, repo, head_sha[:12])
-        return _cache_hit(owner, repo, head_sha, branch, description)
+    if head_sha and existing and existing["sha"] == head_sha:
+        log.info("[%s] %s cache hit at %s", user_id or "anonymous", repo_name, head_sha[:12])
+        return _cache_hit(user_id, owner, repo, head_sha, branch, description)
 
     if meta.get("private"):
         raise HTTPException(
@@ -650,27 +753,24 @@ async def loadrepo(payload: LoadRepoRequest, authorization: str = Header(default
             ),
         )
 
-    global _slots
-    if _slots is None:
-        # Created here rather than at import so it binds to the running loop.
-        _slots = asyncio.Semaphore(MAX_CONCURRENT_INDEXES)
+    lock = _repo_locks.setdefault(repo_name, asyncio.Lock())
 
-    lock = _repo_locks.setdefault(f"{owner}/{repo}", asyncio.Lock())
-
-    async with _slots:
+    async with _index_semaphore():
         async with lock:
-            # Re-check under the lock: another request for this repo may have
-            # finished building it while we waited.
-            if head_sha and head_sha in stored_shas(owner, repo):
-                log.info("[%s/%s] cache hit after waiting", owner, repo)
-                return _cache_hit(owner, repo, head_sha, branch, description)
+            # Re-check under the lock: another request for this repo + user may
+            # have finished building it while we waited.
+            current = _get_user_repo(user_id, repo_name)
+            head_now = head_sha or github_head_sha(owner, repo, branch)
+            if head_now and current and current["sha"] == head_now:
+                log.info("[%s] %s cache hit after waiting", user_id or "anonymous", repo_name)
+                return _cache_hit(user_id, owner, repo, head_now, branch, description)
 
             started = time.monotonic()
-            log.info("[%s/%s] indexing %s @ %s", owner, repo, branch, head_sha[:12] or "?")
+            log.info("[%s] indexing %s @ %s", user_id or "anonymous", repo_name, head_now[:12] or "?")
 
             try:
                 result = await run_in_threadpool(
-                    index_repository, owner, repo, branch, description
+                    index_repository, owner, repo, branch, description, user_id
                 )
             except RepoTooLargeError as e:
                 raise HTTPException(status_code=413, detail=str(e)) from e
@@ -680,14 +780,53 @@ async def loadrepo(payload: LoadRepoRequest, authorization: str = Header(default
                 log.exception("[%s/%s] indexing failed", owner, repo)
                 raise HTTPException(status_code=500, detail=f"Indexing failed: {e}") from e
 
+            # Key the sidebar row by whatever the user pasted, so the row and
+            # the storage prefix always agree.
+            result["repo_name"] = repo_name
+
+            _upsert_repo(
+                user_id,
+                {
+                    "repo_name": repo_name,
+                    "url": result["url"],
+                    "branch": result["branch"],
+                    "sha": result["sha"],
+                    "file_count": result["file_count"],
+                    "total_lines": result["total_lines"],
+                    "description": result.get("description", ""),
+                },
+            )
             log.info(
-                "[%s/%s] done in %.1fs (%d files)",
-                owner,
-                repo,
+                "[%s] %s done in %.1fs (%d files)",
+                user_id or "anonymous",
+                repo_name,
                 time.monotonic() - started,
                 result["file_count"],
             )
-            return LoadRepoResponse(**result)
+
+            return LoadRepoResponse(
+                **result,
+                repo_count=_count_user_repos(user_id),
+                repo_limit=MAX_REPOS_PER_USER,
+            )
+
+
+@app.get("/api/repos", response_model=ListReposResponse)
+def list_repos(authorization: str = Header(default="")) -> ListReposResponse:
+    """The caller's uploaded repositories — metadata only, streaming the index
+    happens per query. This is what the sidebar renders."""
+    user_id = verify_bearer_token(authorization)
+
+    try:
+        rows = _list_user_repos(user_id)
+    except Exception as e:
+        log.exception("[repos] listing failed for %s", user_id or "anonymous")
+        raise HTTPException(status_code=502, detail="Could not load your repositories right now.") from e
+
+    return ListReposResponse(
+        repos=[_repo_info(row) for row in rows],
+        repo_limit=MAX_REPOS_PER_USER,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -695,53 +834,34 @@ async def loadrepo(payload: LoadRepoRequest, authorization: str = Header(default
 # ---------------------------------------------------------------------------
 
 
-def _resolve_query_target(user_id: str, payload: UserQueryRequest) -> tuple[str, str]:
-    """Decide which repository@commit the question is about.
+def _user_repo_target(user_id: str, requested: str) -> dict:
+    """The caller's repo metadata row to answer against.
 
-    The user id always comes from the verified bearer token — never from the
-    body — so one user cannot address another's session.
-
-    Resolution order:
-        1. repo_name + sha given  -> use them.
-        2. repo_name only         -> the user's live session for that repo if
-                                     one exists, else its most recent stored sha.
-        3. neither                -> the user's single live session.
+    Resolves from the caller's OWN rows only — the (user_id, repo_name) lookup
+    is the authorization check, so one user can never address another's repo.
     """
-    repo_name = (payload.repo_name or "").strip().strip("/")
-    sha = (payload.sha or "").strip()
-
-    if repo_name and sha:
-        return repo_name, sha
-
-    if repo_name:
-        live = session_registry.find_handle(user_id, repo_name, sha)
-        if live is not None:
-            return live.repo_name, live.sha
-
-        from repo_storage import split_repo
-
-        owner, repo = split_repo(repo_name)
-        known = stored_shas(owner, repo)
-        if not known:
-            raise HTTPException(
-                status_code=422,
-                detail=f"{repo_name} has no stored index. Connect it from /get-started first.",
-            )
-        return repo_name, known[0]
-
-    handles = session_registry.handles_for_user(user_id)
-    if not handles:
+    requested = (requested or "").strip().strip("/")
+    rows = _list_user_repos(user_id)
+    if not rows:
         raise HTTPException(
             status_code=422,
-            detail="No repository connected. Connect one from /get-started before asking a question.",
+            detail="No repository connected. Connect one from /get-started first.",
         )
-    if len(handles) > 1:
-        names = ", ".join(sorted({h.repo_name for h in handles}))
+    if requested:
+        for row in rows:
+            if row["repo_name"] == requested:
+                return row
+        raise HTTPException(
+            status_code=404,
+            detail=f"You haven't connected {requested}. Connect it from /get-started first.",
+        )
+    if len(rows) > 1:
+        names = ", ".join(sorted(r["repo_name"] for r in rows))
         raise HTTPException(
             status_code=422,
             detail=f"Several repositories are connected ({names}). Specify which one to query.",
         )
-    return handles[0].repo_name, handles[0].sha
+    return rows[0]
 
 
 def _query_error_detail(exc: Exception) -> str:
@@ -773,13 +893,27 @@ def _cap_error_text(error: str) -> str:
     return text
 
 
+def _download_index(user_id: str, owner: str, repo: str, sha: str, full_path: str, light_path: str) -> None:
+    """Stream this user's two index files into `full_path` / `light_path`."""
+    from repo_storage import stream_download
+
+    stream_download(storage_path_json(owner, repo, sha, user_id), full_path)
+    stream_download(storage_path_light_json(owner, repo, sha, user_id), light_path)
+    for path in (full_path, light_path):
+        if os.path.getsize(path) == 0:
+            raise RuntimeError(f"Empty index object for {repo}@{sha[:7]}")
+
+
 @app.post("/api/userquery", response_model=UserQueryResponse)
 async def userquery(payload: UserQueryRequest, authorization: str = Header(default="")) -> UserQueryResponse:
-    """Answer a question about an already-indexed repository.
+    """Answer a question about one of the caller's own repositories.
 
-    Every stage that can block — downloading the index, parsing 50MB of JSON,
-    building the REPL, and the query itself (up to `max_timeout=240s`) — runs
-    in a worker thread, so the event loop keeps serving other requests.
+    Self-contained per query: download the user's index into a temp dir, parse
+    it, build a fresh RLM, route, and tear down before returning. Nothing is
+    cached across requests, so there is nothing to share and no session state.
+
+    Every stage that can block — downloading, parsing up to 50MB of JSON,
+    building the REPL, and the query itself — runs in a worker thread.
 
     Failures split by where they happen:
       - before/around routing (unknown repo, missing index) -> 4xx/5xx status;
@@ -788,32 +922,52 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
     """
     user_id = verify_bearer_token(authorization)
 
-    repo_name, sha = _resolve_query_target(user_id, payload)
+    question = payload.question.strip()
+    if not question:
+        raise HTTPException(status_code=422, detail="question must not be empty")
+
+    row = _user_repo_target(user_id, payload.repo_name or "")
+    repo_name = row["repo_name"]
+    sha = row["sha"]
     log.info("[query] %s asking %s@%s", user_id or "anonymous", repo_name, sha[:12])
 
-    try:
-        handle = await session_registry.get_or_create(user_id, repo_name, sha)
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=_query_error_detail(e)) from e
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e)) from e
-    except Exception as e:
-        log.exception("[query] session setup failed for %s@%s", repo_name, sha[:12])
-        raise HTTPException(status_code=502, detail=_query_error_detail(e)) from e
+    owner, repo = split_repo(repo_name)
+    session_id = f"{user_id}:{repo_name}@{sha[:16]}"
 
+    workdir = tempfile.mkdtemp(prefix="repochat-query-")
+    full_path = os.path.join(workdir, "codebase.json")
+    light_path = os.path.join(workdir, "codebase_lightweight.json")
     started = time.monotonic()
+
     try:
-        result = await handle.ask(payload.question)
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=_query_error_detail(e)) from e
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e)) from e
-    except Exception as e:
-        log.exception("[query] %s@%s failed", repo_name, sha[:12])
-        raise HTTPException(status_code=502, detail=_query_error_detail(e)) from e
+        async with _query_semaphore():
+            try:
+                await run_in_threadpool(
+                    _download_index, user_id, owner, repo, sha, full_path, light_path
+                )
+            except Exception as e:
+                log.exception("[query] download failed for %s@%s", repo_name, sha[:12])
+                raise HTTPException(
+                    status_code=502,
+                    detail="Could not retrieve your repository index. Reconnect it from /get-started.",
+                ) from e
+
+            try:
+                result = await run_in_threadpool(
+                    query_router.answer_for_session, session_id, full_path, light_path, payload.question
+                )
+            except FileNotFoundError as e:
+                raise HTTPException(status_code=404, detail=_query_error_detail(e)) from e
+            except ValueError as e:
+                raise HTTPException(status_code=422, detail=str(e)) from e
+            except Exception as e:
+                log.exception("[query] %s@%s failed", repo_name, sha[:12])
+                raise HTTPException(status_code=502, detail=_query_error_detail(e)) from e
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
 
     error = _cap_error_text(result.error) or None
-    print(result.answer)
+
     return UserQueryResponse(
         answer=result.answer or "",
         tier=result.tier,

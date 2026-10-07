@@ -52,7 +52,9 @@ INDEX_IDLE_SECONDS = 3600
 
 MAX_SESSIONS = 32
 
-DEFAULT_MODEL = "inclusionai/ling-3.0-flash-sante:free"
+# "dots-studio/dots-3-note-preview:free"
+# "inclusionai/ling-3.0-flash-sante:free"
+DEFAULT_MODEL = "dots-studio/dots-3-note-preview:free"
 
 _query_slots: Optional[asyncio.Semaphore] = None
 

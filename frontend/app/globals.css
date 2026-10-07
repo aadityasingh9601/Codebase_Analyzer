@@ -102,6 +102,262 @@
   }
 }
 
+/*
+ * Rendered assistant answers (Markdown). The model writes Markdown — headings,
+ * bullets, tables, fenced code, mermaid diagrams — so the chat renders it with
+ * react-markdown. Tailwind's preflight zeroes list/heading/table defaults, so
+ * these rules restore a readable document inside .markdown-body only.
+ */
+.markdown-body {
+  font-size: 14px;
+  line-height: 1.7;
+  overflow-wrap: break-word;
+}
+
+.markdown-body > *:first-child {
+  margin-top: 0;
+}
+.markdown-body > *:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body p {
+  margin: 0 0 0.9em;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  margin: 1.4em 0 0.6em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.markdown-body h1 {
+  font-size: 20px;
+}
+.markdown-body h2 {
+  font-size: 17px;
+}
+.markdown-body h3 {
+  font-size: 15px;
+}
+.markdown-body h4 {
+  font-size: 14px;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0 0 0.9em;
+  padding-left: 1.4em;
+}
+.markdown-body ul {
+  list-style: disc;
+}
+.markdown-body ol {
+  list-style: decimal;
+}
+.markdown-body li {
+  margin: 0.25em 0;
+}
+.markdown-body li > p {
+  margin: 0.25em 0;
+}
+
+.markdown-body a {
+  color: hsl(var(--accent));
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.markdown-body strong {
+  font-weight: 600;
+}
+
+.markdown-body blockquote {
+  margin: 0 0 0.9em;
+  padding: 0.2em 1em;
+  border-left: 3px solid hsl(var(--border-strong));
+  color: hsl(var(--muted));
+}
+
+.markdown-body hr {
+  margin: 1.4em 0;
+  border: 0;
+  border-top: 1px solid hsl(var(--border));
+}
+
+.markdown-body code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+/* Inline code gets a chip; fenced blocks keep their own pre background. */
+.markdown-body :not(pre) > code {
+  background: hsl(var(--surface-subtle));
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  padding: 0.1em 0.35em;
+}
+.markdown-body pre code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.markdown-body table {
+  border-collapse: collapse;
+  margin: 0 0 0.9em;
+  width: 100%;
+  font-size: 13px;
+}
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid hsl(var(--border));
+  padding: 0.4em 0.7em;
+  text-align: left;
+}
+.markdown-body th {
+  background: hsl(var(--surface-subtle));
+  font-weight: 600;
+}
+
+.markdown-body img {
+  max-width: 100%;
+  border-radius: 8px;
+}
+
+/*
+ * Rendered diagrams (mermaid outputs an <svg>). Same behaviour as GitHub
+ * READMEs: scale down to the content width, keep proportions, centre. With the
+ * viewBox mermaid emits, a wide flowchart shrinks to fit fully instead of
+ * being cut off or needing sideways scrolling.
+ */
+.markdown-body svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin-inline: auto;
+}
+
+/**
+ * Syntax highlighting for fenced code blocks (classes emitted by
+ * rehype-highlight / highlight.js). The palette follows the app's own
+ * light/dark tokens instead of importing a third-party theme, so code blocks
+ * always match the theme the user chose.
+ */
+.markdown-body code.hljs {
+  background: transparent;
+  padding: 0;
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: hsl(240 5% 42%);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-doctag {
+  color: hsl(262 83% 54%);
+}
+.hljs-string,
+.hljs-addition,
+.hljs-regexp,
+.hljs-attr-value {
+  color: hsl(142 71% 29%);
+}
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-char.escape_ {
+  color: hsl(23 90% 38%);
+}
+.hljs-title,
+.hljs-title.function_,
+.hljs-name,
+.hljs-section {
+  color: hsl(221 83% 42%);
+}
+.hljs-attr,
+.hljs-attribute,
+.hljs-variable,
+.hljs-template-variable {
+  color: hsl(187 84% 28%);
+}
+.hljs-built_in,
+.hljs-type,
+.hljs-selector-class,
+.hljs-selector-id,
+.hljs-selector-attr {
+  color: hsl(217 91% 40%);
+}
+.hljs-meta,
+.hljs-tag,
+.hljs-diff {
+  color: hsl(240 4% 46%);
+}
+.hljs-deletion {
+  color: hsl(0 72% 45%);
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 600;
+}
+
+:root[data-theme="dark"] .hljs-comment,
+:root[data-theme="dark"] .hljs-quote {
+  color: hsl(240 5% 58%);
+}
+:root[data-theme="dark"] .hljs-keyword,
+:root[data-theme="dark"] .hljs-selector-tag,
+:root[data-theme="dark"] .hljs-literal,
+:root[data-theme="dark"] .hljs-doctag {
+  color: hsl(267 90% 74%);
+}
+:root[data-theme="dark"] .hljs-string,
+:root[data-theme="dark"] .hljs-addition,
+:root[data-theme="dark"] .hljs-regexp,
+:root[data-theme="dark"] .hljs-attr-value {
+  color: hsl(134 61% 64%);
+}
+:root[data-theme="dark"] .hljs-number,
+:root[data-theme="dark"] .hljs-symbol,
+:root[data-theme="dark"] .hljs-bullet,
+:root[data-theme="dark"] .hljs-char.escape_ {
+  color: hsl(34 92% 63%);
+}
+:root[data-theme="dark"] .hljs-title,
+:root[data-theme="dark"] .hljs-title.function_,
+:root[data-theme="dark"] .hljs-name,
+:root[data-theme="dark"] .hljs-section {
+  color: hsl(214 95% 78%);
+}
+:root[data-theme="dark"] .hljs-attr,
+:root[data-theme="dark"] .hljs-attribute,
+:root[data-theme="dark"] .hljs-variable,
+:root[data-theme="dark"] .hljs-template-variable {
+  color: hsl(187 92% 74%);
+}
+:root[data-theme="dark"] .hljs-built_in,
+:root[data-theme="dark"] .hljs-type,
+:root[data-theme="dark"] .hljs-selector-class,
+:root[data-theme="dark"] .hljs-selector-id,
+:root[data-theme="dark"] .hljs-selector-attr {
+  color: hsl(213 94% 74%);
+}
+:root[data-theme="dark"] .hljs-meta,
+:root[data-theme="dark"] .hljs-tag,
+:root[data-theme="dark"] .hljs-diff {
+  color: hsl(240 5% 62%);
+}
+:root[data-theme="dark"] .hljs-deletion {
+  color: hsl(0 86% 70%);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

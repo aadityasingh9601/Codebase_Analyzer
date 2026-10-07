@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { RepoSidebar } from "@/components/repo-sidebar";
+import { MarkdownContent } from "@/components/markdown-content";
 import { CopyIcon, CheckIcon, SendIcon, SpinnerIcon, FileIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { useSelectedRepo } from "@/hooks/use-selected-repo";
@@ -439,12 +440,11 @@ function MessageBubble({ message }: { message: Message }) {
       </div>
 
       <div className="pl-7">
-        <div className="text-[14px] leading-[1.7] whitespace-pre-wrap text-foreground">
-          {message.content}
-          {message.pending && !message.content ? (
-            <span className="ml-0.5 inline-block h-4 w-[2px] animate-pulse bg-accent align-text-bottom" />
-          ) : null}
-        </div>
+        {message.pending && !message.content ? (
+          <span className="inline-block h-4 w-[2px] animate-pulse bg-accent align-text-bottom" />
+        ) : (
+          <MarkdownContent content={message.content} />
+        )}
 
         {message.error ? (
           <p className="mt-3 rounded-lg border border-border-base bg-surface-subtle px-3 py-2 text-[12.5px] leading-relaxed text-muted">

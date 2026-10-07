@@ -24,6 +24,8 @@ export type LoadedRepo = {
   description: string;
   cached: boolean;
   storage_path: string;
+  /** The `repos` table row id — scopes the chat history for this repo. */
+  id: string;
 };
 
 /**
@@ -142,6 +144,7 @@ function isLoadedRepo(value: unknown): value is LoadedRepo {
     typeof candidate.sha === "string" &&
     typeof candidate.branch === "string" &&
     typeof candidate.file_count === "number" &&
-    typeof candidate.cached === "boolean"
+    typeof candidate.cached === "boolean" &&
+    typeof candidate.id === "string"
   );
 }

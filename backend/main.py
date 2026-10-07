@@ -1,10 +1,12 @@
 """
 main.py — HTTP API for RepoChat.
 
-    POST /api/loadrepo   index a GitHub repository and store it in Supabase
-    GET  /api/repos      metadata for the caller's uploaded repositories
-    POST /api/userquery  answer a question about one of those repositories
-    GET  /api/health     liveness probe
+    POST /api/loadrepo    index a GitHub repository and store it in Supabase
+    GET  /api/repos       metadata for the caller's uploaded repositories
+    POST /api/userquery   answer a question about one of those repositories
+    GET  /api/messages    a repository conversation's saved messages
+    POST /api/messages    persist one user or assistant message
+    GET  /api/health      liveness probe
 
 Repositories are PRIVATE to the user who uploaded them. When the web app
 indexes a repo it lands in the storage bucket under `{user_id}/owner/repo/sha/`
@@ -31,6 +33,13 @@ downloaded into a temp directory, parsed, a fresh RLM is built for them, the
 question is routed (cheap direct model call, or the RLM for real analysis),
 and everything is closed and deleted before returning. No sessions are cached
 across requests.
+
+`GET/POST /api/messages` persist conversation history so it survives sessions.
+Each message stores the repos-table row id (`repo_id`) of the repo the chat
+happens in, plus `role`, `content`, `sources` and `created_at` (see
+supabase_messages_table.sql). Every read and write first resolves that repo by
+`user_id` + `id` — the same ownership rule as everything else — so messages
+are as private as the repos they belong to.
 
 Auth: callers send the Supabase access token as `Authorization: Bearer <jwt>`,
 the same token the browser holds. It is verified against the project's JWKS, so
@@ -60,6 +69,7 @@ import shutil
 import sys
 import tempfile
 import time
+from typing import Literal
 
 import httpx
 import jwt
@@ -183,11 +193,13 @@ class LoadRepoResponse(BaseModel):
     storage_path: str = Field(
         ..., description="Bucket path holding the index, under the user's private prefix."
     )
+    id: str = Field("", description="The repos table row id, used to scope chat messages.")
     repo_count: int = Field(0, description="How many repositories the user has now.")
     repo_limit: int = Field(MAX_REPOS_PER_USER, description="Per-user repo limit.")
 
 
 class RepoInfo(BaseModel):
+    id: str = Field("", description="The repos table row id, used to scope chat messages.")
     repo_name: str = Field(..., examples=["pallets/click"])
     url: str = Field(..., examples=["https://github.com/pallets/click"])
     branch: str = Field(..., examples=["main"])
@@ -202,6 +214,39 @@ class RepoInfo(BaseModel):
 class ListReposResponse(BaseModel):
     repos: list[RepoInfo] = Field(default_factory=list)
     repo_limit: int = Field(MAX_REPOS_PER_USER, description="Per-user repo limit.")
+
+
+class SavedMessage(BaseModel):
+    id: str = Field("", description="The messages table row id.")
+    repo_id: str = Field("", description="The repos table row id this message belongs to.")
+    user_id: str = Field("", description="The user who owns the conversation.")
+    role: str = Field("", description="'user' or 'assistant'.")
+    content: str = Field("", description="The message text.")
+    sources: list[str] = Field(
+        default_factory=list,
+        description="File paths an assistant answer cites, for citation chips.",
+    )
+    created_at: str = Field("", description="ISO timestamp of when the message was saved.")
+
+
+class SaveMessageRequest(BaseModel):
+    repo_id: str = Field(..., description="The repos table row id the conversation belongs to.")
+    role: Literal["user", "assistant"] = Field(..., description="Who wrote the message.")
+    content: str = Field(
+        ...,
+        min_length=1,
+        max_length=100000,
+        description="The message text. Whitespace-only is rejected.",
+    )
+    sources: list[str] = Field(
+        default_factory=list,
+        description="File paths an assistant answer cites.",
+    )
+
+
+class ListMessagesResponse(BaseModel):
+    repo_id: str = Field(...)
+    messages: list[SavedMessage] = Field(default_factory=list)
 
 
 class UserQueryRequest(BaseModel):
@@ -414,6 +459,7 @@ def verify_bearer_token(authorization: str) -> str:
 # ---------------------------------------------------------------------------
 
 REPOS_TABLE = "repos"
+MESSAGES_TABLE = "messages"
 
 
 def _db():
@@ -452,6 +498,26 @@ def _get_user_repo(user_id: str, repo_name: str) -> dict | None:
     return rows[0] if rows else None
 
 
+def _get_user_repo_by_id(user_id: str, repo_id: str) -> dict | None:
+    """The caller's repo metadata row by its `repos` id, or None.
+
+    Messages are scoped to a repo row id. Resolving that row by (user_id, id)
+    is the ownership check for the conversation: a message can only ever be
+    read or written inside a repo that is actually this caller's.
+    """
+    data = (
+        _db()
+        .table(REPOS_TABLE)
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("id", repo_id)
+        .limit(1)
+        .execute()
+    )
+    rows = list(data.data or [])
+    return rows[0] if rows else None
+
+
 def _count_user_repos(user_id: str) -> int:
     # Rows are unique per (user_id, repo_name), so the row count is the repo count.
     return len(_list_user_repos(user_id))
@@ -475,6 +541,7 @@ def _upsert_repo(user_id: str, fields: dict) -> None:
 
 def _repo_info(row: dict) -> RepoInfo:
     return RepoInfo(
+        id=row.get("id") or "",
         repo_name=row["repo_name"],
         url=row["url"],
         branch=row["branch"],
@@ -485,6 +552,60 @@ def _repo_info(row: dict) -> RepoInfo:
         created_at=str(row.get("created_at") or ""),
         updated_at=str(row.get("updated_at") or ""),
     )
+
+
+def _message_info(row: dict) -> SavedMessage:
+    return SavedMessage(
+        id=row.get("id") or "",
+        repo_id=row.get("repo_id") or "",
+        user_id=row.get("user_id") or "",
+        role=row.get("role") or "",
+        content=row.get("content") or "",
+        sources=list(row.get("sources") or []),
+        created_at=str(row.get("created_at") or ""),
+    )
+
+
+# ---------------------------------------------------------------------------
+# `messages` table (persistent chat history — see supabase_messages_table.sql)
+# ---------------------------------------------------------------------------
+
+
+def _list_messages(user_id: str, repo_id: str) -> list[dict]:
+    """One conversation's rows, oldest first (stable order by id too)."""
+    data = (
+        _db()
+        .table(MESSAGES_TABLE)
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("repo_id", repo_id)
+        .order("created_at")
+        .order("id")
+        .execute()
+    )
+    return list(data.data or [])
+
+
+def _insert_message(user_id: str, repo_id: str, role: str, content: str, sources: list[str]) -> dict:
+    """Append one message to a conversation and return the stored row."""
+    created = (
+        _db()
+        .table(MESSAGES_TABLE)
+        .insert(
+            {
+                "user_id": user_id,
+                "repo_id": repo_id,
+                "role": role,
+                "content": content,
+                "sources": list(sources),
+            }
+        )
+        .execute()
+    )
+    rows = list(created.data or [])
+    if not rows:
+        raise RuntimeError("message insert returned no row")
+    return rows[0]
 
 
 # ---------------------------------------------------------------------------
@@ -657,6 +778,7 @@ def _cache_hit(
     sha: str,
     branch: str,
     description: str,
+    repo_id: str = "",
 ) -> LoadRepoResponse:
     """Response for a commit whose index is already stored for this user."""
     file_count, total_lines = summarize_stored(user_id, owner, repo, sha)
@@ -671,6 +793,7 @@ def _cache_hit(
         description=description,
         cached=True,
         storage_path=storage_path_json(owner, repo, sha, user_id),
+        id=repo_id,
         repo_count=_count_user_repos(user_id),
         repo_limit=MAX_REPOS_PER_USER,
     )
@@ -742,7 +865,9 @@ async def loadrepo(payload: LoadRepoRequest, authorization: str = Header(default
 
     if head_sha and existing and existing["sha"] == head_sha:
         log.info("[%s] %s cache hit at %s", user_id or "anonymous", repo_name, head_sha[:12])
-        return _cache_hit(user_id, owner, repo, head_sha, branch, description)
+        return _cache_hit(
+            user_id, owner, repo, head_sha, branch, description, repo_id=existing.get("id", "")
+        )
 
     if meta.get("private"):
         raise HTTPException(
@@ -763,7 +888,9 @@ async def loadrepo(payload: LoadRepoRequest, authorization: str = Header(default
             head_now = head_sha or github_head_sha(owner, repo, branch)
             if head_now and current and current["sha"] == head_now:
                 log.info("[%s] %s cache hit after waiting", user_id or "anonymous", repo_name)
-                return _cache_hit(user_id, owner, repo, head_now, branch, description)
+                return _cache_hit(
+                    user_id, owner, repo, head_now, branch, description, repo_id=current.get("id", "")
+                )
 
             started = time.monotonic()
             log.info("[%s] indexing %s @ %s", user_id or "anonymous", repo_name, head_now[:12] or "?")
@@ -804,8 +931,13 @@ async def loadrepo(payload: LoadRepoRequest, authorization: str = Header(default
                 result["file_count"],
             )
 
+            # The sidebar's chat is scoped by the repos row id; fetch the row we
+            # just upserted so the response carries it.
+            upserted = _get_user_repo(user_id, repo_name) or {}
+
             return LoadRepoResponse(
                 **result,
+                id=upserted.get("id", ""),
                 repo_count=_count_user_repos(user_id),
                 repo_limit=MAX_REPOS_PER_USER,
             )
@@ -827,6 +959,71 @@ def list_repos(authorization: str = Header(default="")) -> ListReposResponse:
         repos=[_repo_info(row) for row in rows],
         repo_limit=MAX_REPOS_PER_USER,
     )
+
+
+# ---------------------------------------------------------------------------
+# Persistent chat history
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/messages", response_model=ListMessagesResponse)
+def list_messages(
+    repo_id: str | None = None,
+    authorization: str = Header(default=""),
+) -> ListMessagesResponse:
+    """The saved conversation for one of the caller's repositories, oldest first.
+
+    `repo_id` is the `repos` table row id. It is resolved against the caller's
+    own rows first — a conversation can only be read inside a repo this user
+    actually owns, mirroring the per-user privacy of the repos themselves.
+    """
+    user_id = verify_bearer_token(authorization)
+
+    repo_id = (repo_id or "").strip()
+    if not repo_id:
+        raise HTTPException(status_code=422, detail="repo_id is required")
+
+    if not _get_user_repo_by_id(user_id, repo_id):
+        raise HTTPException(status_code=404, detail="That repository isn't yours.")
+
+    try:
+        rows = _list_messages(user_id, repo_id)
+    except Exception as e:
+        log.exception("[messages] listing failed for %s", user_id or "anonymous")
+        raise HTTPException(status_code=502, detail="Could not load the conversation right now.") from e
+
+    return ListMessagesResponse(
+        repo_id=repo_id,
+        messages=[_message_info(row) for row in rows],
+    )
+
+
+@app.post("/api/messages", response_model=SavedMessage)
+def save_message(
+    payload: SaveMessageRequest,
+    authorization: str = Header(default=""),
+) -> SavedMessage:
+    """Append one user or assistant message to a repository conversation.
+
+    The repo row id is ownership-checked the same way as the GET above, so a
+    message can only be saved inside a repo this user actually owns.
+    """
+    user_id = verify_bearer_token(authorization)
+
+    content = payload.content.strip()
+    if not content:
+        raise HTTPException(status_code=422, detail="message content must not be empty")
+
+    if not _get_user_repo_by_id(user_id, payload.repo_id):
+        raise HTTPException(status_code=404, detail="That repository isn't yours.")
+
+    try:
+        row = _insert_message(user_id, payload.repo_id, payload.role, content, payload.sources)
+    except Exception as e:
+        log.exception("[messages] save failed for %s", user_id or "anonymous")
+        raise HTTPException(status_code=502, detail="Could not save the message. Try again.") from e
+
+    return _message_info(row)
 
 
 # ---------------------------------------------------------------------------

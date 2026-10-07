@@ -74,6 +74,7 @@ export function RepoSetup() {
       slug: result.repo.repo_name,
       url: result.repo.url,
       addedAt: new Date().toISOString(),
+      id: result.repo.id,
       sha: result.repo.sha,
       branch: result.repo.branch,
       fileCount: result.repo.file_count,

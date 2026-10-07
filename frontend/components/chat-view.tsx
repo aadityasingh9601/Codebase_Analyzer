@@ -9,6 +9,10 @@ import { Button } from "@/components/ui/button";
 import { useSelectedRepo } from "@/hooks/use-selected-repo";
 import { clearSelectedRepo, type SelectedRepo } from "@/lib/repo";
 import { askQuestion } from "@/app/lib/actions/askQuestion";
+import {
+  fetchMessages,
+  saveMessage,
+} from "@/app/lib/actions/messages";
 
 export type Message = {
   id: string;
@@ -86,15 +90,47 @@ const SUGGESTIONS = [
   "What would break if I removed this cache?",
 ];
 
+/**
+ * Save a user question and its assistant answer to the repo's conversation.
+ * Sequential on purpose, so the question is always stored before the reply
+ * that answered it (conversation order is `created_at`). `repo.id` scopes the
+ * history; without it (a legacy hand-typed selection) there is nothing to save.
+ */
+async function persistConversation(
+  repo: NonNullable<SelectedRepo>,
+  question: string,
+  result: Awaited<ReturnType<typeof askQuestion>>,
+): Promise<void> {
+  if (!repo.id) return;
+
+  try {
+    const res = await saveMessage(repo.id, "user", question);
+    console.log("response", res);
+  } catch {
+    return;
+  }
+
+  if (result.ok && result.query.answer) {
+    const res = await saveMessage(repo.id, "assistant", result.query.answer, result.query.evidencePaths);
+    console.log(res);
+  }
+}
+
 export function ChatView() {
   const router = useRouter();
   const repo = useSelectedRepo();
   const [messages, setMessages] = useState<Message[]>(() => initialMessages(repo));
   const [input, setInput] = useState("");
   const [responding, setResponding] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Bumped whenever the conversation is reset or a new user message is added,
+  // so a history fetch that resolves late can never clobber newer content.
+  const conversationSeq = useRef(0);
 
   // The transcript belongs to whichever repo is selected: switching to another
   // repository (from the sidebar, or a new upload on /get-started) starts a new
@@ -104,8 +140,54 @@ export function ChatView() {
     const slug = repo?.slug ?? null;
     if (slug !== activeRepoSlug.current) {
       activeRepoSlug.current = slug;
-      setMessages(initialMessages(repo));
+      conversationSeq.current += 1;
+      // Clear while the repo's history loads — showing the previous repo's
+      // transcript between the switch and the fetch would misattribute it. A
+      // repo without a row id has nothing persisted, so show the greeting.
+      setMessages(repo?.id ? [] : initialMessages(repo));
     }
+  }, [repo]);
+
+  // Load the selected repo's saved conversation once. Re-selecting the same
+  // repo keeps the already-loaded thread instead of re-fetching.
+  const lastLoadedRepoId = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const id = repo?.id;
+    if (!id || id === lastLoadedRepoId.current) return;
+    lastLoadedRepoId.current = id;
+
+    const seq = conversationSeq.current;
+    let cancelled = false;
+    setHistoryLoading(true);
+    setHistoryError("");
+
+    fetchMessages(id).then((result) => {
+      if (cancelled || seq !== conversationSeq.current) return;
+      setHistoryLoading(false);
+
+      if (!result.ok) {
+        setHistoryError(result.error);
+        setMessages(initialMessages(repo));
+        return;
+      }
+
+      if (result.messages.length > 0) {
+        setMessages(
+          result.messages.map((m) => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            sources: m.sources.length > 0 ? m.sources : undefined,
+          })),
+        );
+      } else {
+        setMessages(initialMessages(repo));
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [repo]);
 
   // Pin to the newest message. Smooth scrolling would fight the streaming
@@ -126,6 +208,8 @@ export function ChatView() {
   async function send(text: string) {
     const content = text.trim();
     if (!content || responding || !repo) return;
+
+    conversationSeq.current += 1;
 
     const userMessage: Message = {
       id: nextMessageId("u"),
@@ -163,6 +247,10 @@ export function ChatView() {
     );
 
     setResponding(false);
+
+    // Best-effort persistence: saved so the conversation survives the session,
+    // but a database hiccup must never disturb the chat itself.
+    void persistConversation(repo, content, result);
   }
 
   function handleChangeRepo() {
@@ -215,13 +303,26 @@ export function ChatView() {
                 </div>
               )}
 
+              {repo?.id && historyLoading ? (
+                <p className="mb-5 flex items-center gap-1.5 text-[12.5px] text-muted">
+                  <SpinnerIcon className="h-3.5 w-3.5" />
+                  Loading saved conversation…
+                </p>
+              ) : null}
+
+              {repo && historyError ? (
+                <p className="mb-5 rounded-lg border border-border-base bg-surface-subtle px-3 py-2 text-[12.5px] leading-relaxed text-muted">
+                  Couldn&apos;t load the saved conversation: {historyError}
+                </p>
+              ) : null}
+
               <div className="space-y-7">
                 {messages.map((m) => (
                   <MessageBubble key={m.id} message={m} />
                 ))}
               </div>
 
-              {repo && !responding && messages.length <= 2 ? (
+              {repo && !responding && !historyLoading && messages.length <= 2 ? (
                 <div className="mt-9">
                   <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.07em] text-muted">
                     Try asking

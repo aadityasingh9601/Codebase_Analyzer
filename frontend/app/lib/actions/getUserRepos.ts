@@ -18,6 +18,8 @@ const TIMEOUT_MS = 30_000;
 
 /** A connected repository row for the sidebar (matches `GET /api/repos`). */
 export type UserRepo = {
+  /** The `repos` table row id — scopes the chat history for this repo. */
+  id: string;
   repoName: string;
   url: string;
   branch: string;
@@ -80,6 +82,7 @@ export async function getUserRepos(): Promise<GetReposResult> {
   return {
     ok: true,
     repos: payload.repos.map((row) => ({
+      id: row.id,
       repoName: row.repo_name,
       url: row.url,
       branch: row.branch,
@@ -129,6 +132,7 @@ function isReposResponse(
   value: unknown,
 ): value is {
   repos: Array<{
+    id: string;
     repo_name: string;
     url: string;
     branch: string;
@@ -154,6 +158,7 @@ function isReposResponse(
     if (typeof row !== "object" || row === null) return false;
     const r = row as Record<string, unknown>;
     return (
+      typeof r.id === "string" &&
       typeof r.repo_name === "string" &&
       typeof r.url === "string" &&
       typeof r.branch === "string" &&

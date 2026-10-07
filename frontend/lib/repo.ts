@@ -10,6 +10,12 @@ export type SelectedRepo = {
   url: string;
   addedAt: string;
   /**
+   * The `repos` table row id in Supabase. Populated once the backend has
+   * actually indexed the repo. Chat history is scoped to it: messages are
+   * saved under this id when the user chats, and reloaded when they return.
+   */
+  id?: string;
+  /**
    * Populated once the backend has actually indexed the repo. A selection
    * without these is a URL the user typed but never indexed.
    */

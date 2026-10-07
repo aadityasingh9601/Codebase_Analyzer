@@ -59,6 +59,7 @@ export function RepoSidebar() {
       slug: repo.repoName,
       url: repo.url,
       addedAt: repo.createdAt || new Date().toISOString(),
+      id: repo.id,
       sha: repo.sha,
       branch: repo.branch,
       fileCount: repo.fileCount,

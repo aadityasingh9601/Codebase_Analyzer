@@ -22,9 +22,15 @@ ai_api_key: str = os.getenv("AI_API_KEY")
 # Single source of truth for the RLM + direct-LLM model. Every consumer
 # (query_router, session_registry, create_rlm's own default) resolves this one
 # constant, so changing the model here and restarting the server is all it takes.
-# "nvidia/nemotron-3.5-lightning:free"
-# "inclusionai/ling-3.0-flash-sante:free"
+
+# "nvidia/nemotron-3.5-lightning:free" -> Also very slow.
+# "inclusionai/ling-3.0-flash-sante:free" -> Good but gets rate-limited very quickly.
 # "dots-studio/dots-3-note-preview:free"
+# "thinkingmachines/inkling:free" -> ONlY AVAILABLE WITH AGENTIC HARNESS
+# "nvidia/nemotron-3-super-120b-a12b:free"
+# "nvidia/nemotron-3-ultra-550b-a55b:free" -> Too big, so very slow, followed the markdown format properly.
+
+
 DEFAULT_MODEL = "inclusionai/ling-3.0-flash-sante:free"
 
 
@@ -148,6 +154,24 @@ SYSTEM_PROMPT_CODEBASE = (
     "Use them to summarize a huge file, synthesize across many files, or decompose a big question into "
     "sub-problems and combine the answers in code (plan steps, branch on results, aggregate). For small "
     "direct lookups, read files directly instead.\n\n"
+    "OUTPUT FORMAT — the chat UI renders your `answer` as MARKDOWN, so write it as Markdown:\n"
+    "- Structure: short paragraphs, ##/### headings, bullet lists, and **bold** where they help. Keep it "
+    "concise; do not repeat the question back.\n"
+    "- Code: put every snippet in a fenced code block with the language name right after the opening "
+    "fence (three backticks + the language, e.g. python, js, diff). Never dump code as plain text, and "
+    "never wrap your whole answer in one code block.\n"
+    "- Diagrams: when a flowchart or architecture diagram would help, emit a Mermaid diagram. Open a "
+    "fenced block whose language is exactly `mermaid` (three backticks + mermaid), and inside it write a "
+    "mermaid definition, for example:\n"
+    "flowchart TD\n"
+    "    A[User] --> B[Auth]\n"
+    "    B --> C{{Valid?}}\n"
+    "    C -->|yes| D[Proceed]\n"
+    "    C -->|no| E[Reject]\n"
+    "Close the block with three backticks. The reader sees that rendered as a real diagram, so never "
+    "describe a flow purely in ASCII art or nested text bullets when a diagram fits.\n"
+    "- Tables work too (GitHub-flavoured Markdown) for comparisons.\n"
+    "The result must look intentional: code is code, diagrams are diagrams, prose is prose.\n\n"
     "SUBMITTING THE ANSWER — the moment you have it, copy this EXACTLY (one repl block, no trailing "
     "commas, no extra statements):\n"
     "```repl\n"
@@ -205,7 +229,7 @@ def create_rlm(
         },
         logger=logger,
         max_depth=2,
-        max_iterations=8,
+        max_iterations=10,
         max_errors=3,
         max_timeout=240,
         max_tokens=1000000,

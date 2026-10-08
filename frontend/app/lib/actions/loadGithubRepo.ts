@@ -5,7 +5,7 @@ import { getAuthHeaders, getBackendUrl } from "@/lib/utils/getSession";
 /**
  * Server Action: make a repository chat-ready.
  *
- * Called from /get-started when the user submits a GitHub URL. Runs on the
+ * Called from /upload-repo when the user submits a GitHub URL. Runs on the
  * server, so the Supabase service-role credentials the API needs never touch the
  * browser, and the caller's session token travels server-to-server.
  *

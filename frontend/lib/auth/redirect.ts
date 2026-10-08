@@ -1,7 +1,7 @@
 /**
  * Remembers where an unauthenticated visitor was heading, so the Google round
  * trip can drop them back on the page they asked for instead of always
- * landing on /get-started.
+ * landing on /chat.
  *
  * A cookie rather than a `?next=` search param: Supabase appends `code` to the
  * `redirectTo` it was configured with, and threading an extra param through

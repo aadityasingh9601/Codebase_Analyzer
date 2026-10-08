@@ -7,7 +7,7 @@ import { UserMenu } from "@/components/user-menu";
 
 /**
  * Chrome shared by the signed-in pages (navbar). Kept in one place so
- * /get-started and /chat stay visually identical.
+ * /upload-repo and /chat stay visually identical.
  *
  * The auth guard lives here rather than in each page so a new protected route
  * cannot be added without it: anything rendered inside `AppShell` requires a
@@ -26,7 +26,7 @@ export function AppShell({
       <header className="sticky top-0 z-30 border-b border-border-base bg-background/85 backdrop-blur-md">
         <div className="mx-auto flex h-14 w-full max-w-[1180px] items-center gap-3 px-5">
           <Link
-            href="/get-started"
+            href="/upload-repo"
             className="shrink-0 transition-opacity hover:opacity-80"
             aria-label="RepoChat home"
           >
@@ -36,7 +36,7 @@ export function AppShell({
           <span className="h-4 w-px bg-border-base" aria-hidden="true" />
 
           <nav className="hidden items-center gap-1 sm:flex">
-            <NavLink href="/get-started">New repo</NavLink>
+            <NavLink href="/upload-repo">New repo</NavLink>
             <NavLink href="/chat">Chat</NavLink>
           </nav>
 

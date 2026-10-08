@@ -15,7 +15,7 @@ export default function NotFound() {
           keep going.
         </p>
         <Link
-          href="/get-started"
+          href="/upload-repo"
           className="mt-6 inline-flex h-10 items-center rounded-xl bg-accent px-4 text-sm font-medium text-accent-foreground transition-[filter] hover:brightness-110"
         >
           Go to setup

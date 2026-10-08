@@ -78,7 +78,7 @@
 }
 
 @layer utilities {
-  /* Subtle dot grid used behind auth / get-started for depth. */
+  /* Subtle dot grid used behind auth / upload-repo for depth. */
   .bg-grid {
     background-image: radial-gradient(
       circle at 1px 1px,

@@ -1,4 +1,4 @@
-/** Repo selection shared between /get-started and /chat. */
+/** Repo selection shared between /upload-repo and /chat. */
 
 export const REPO_STORAGE_KEY = "repochat-selected-repo";
 

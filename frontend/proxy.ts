@@ -82,7 +82,7 @@ export async function proxy(request: NextRequest) {
 
   if (isAuthRoute) {
     // Deliberately no redirect for a stale session here. Bouncing
-    // /auth → /get-started → (refresh fails) → /auth would loop forever.
+    // /auth → /chat → (refresh fails) → /auth would loop forever.
     response = signedIn
       ? NextResponse.redirect(new URL(POST_AUTH_REDIRECT, request.url))
       : NextResponse.next();

@@ -117,7 +117,7 @@ export function RepoSidebar() {
             </p>
             <button
               type="button"
-              onClick={() => router.push("/get-started")}
+onClick={() => router.push("/upload-repo")}
               className="mt-2 inline-flex items-center gap-1.5 text-[12px] font-medium text-accent hover:underline"
             >
               <GithubIcon className="h-3.5 w-3.5" />
@@ -166,7 +166,7 @@ export function RepoSidebar() {
       <div className="border-t border-border-base px-3 py-3">
         <button
           type="button"
-          onClick={() => router.push("/get-started")}
+          onClick={() => router.push("/upload-repo")}
           disabled={atLimit}
           className="inline-flex w-full items-center gap-1.5 rounded-lg border border-border-base bg-surface px-3 py-2 text-[12.5px] font-medium text-foreground transition-[background-color,border-color] hover:border-border-strong hover:bg-surface-subtle disabled:cursor-not-allowed disabled:opacity-50"
         >

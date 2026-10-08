@@ -8,8 +8,9 @@ import { MarkdownContent } from "@/components/markdown-content";
 import { CopyIcon, CheckIcon, SendIcon, SpinnerIcon, FileIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { useSelectedRepo } from "@/hooks/use-selected-repo";
-import { clearSelectedRepo, type SelectedRepo } from "@/lib/repo";
+import { clearSelectedRepo, writeSelectedRepo, type SelectedRepo } from "@/lib/repo";
 import { askQuestion } from "@/app/lib/actions/askQuestion";
+import { getUserRepos } from "@/app/lib/actions/getUserRepos";
 import {
   fetchMessages,
   saveMessage,
@@ -134,7 +135,7 @@ export function ChatView() {
   const conversationSeq = useRef(0);
 
   // The transcript belongs to whichever repo is selected: switching to another
-  // repository (from the sidebar, or a new upload on /get-started) starts a new
+  // repository (from the sidebar, or a new upload on /upload-repo) starts a new
   // thread for it instead of asking about two codebases in one conversation.
   const activeRepoSlug = useRef(repo?.slug ?? null);
   useEffect(() => {
@@ -148,6 +149,40 @@ export function ChatView() {
       setMessages(repo?.id ? [] : initialMessages(repo));
     }
   }, [repo]);
+
+  // Opening `/chat` with nothing selected (fresh session, or a cleared stored
+  // choice) can still find a repo to open: if the user has any connected repos,
+  // select the first and land on its conversation; if they have none there is
+  // nothing to ask about yet, so route them to upload one first.
+  useEffect(() => {
+    if (repo) return;
+    let cancelled = false;
+
+    getUserRepos().then((result) => {
+      if (cancelled) return;
+      if (!result.ok) return; // leave the empty state — the fetch failed, not the user
+      if (result.repos.length === 0) {
+        router.replace("/upload-repo");
+        return;
+      }
+      const fallback = result.repos[0];
+      writeSelectedRepo({
+        slug: fallback.repoName,
+        url: fallback.url,
+        addedAt: fallback.createdAt || new Date().toISOString(),
+        id: fallback.id,
+        sha: fallback.sha,
+        branch: fallback.branch,
+        fileCount: fallback.fileCount,
+        totalLines: fallback.totalLines,
+        description: fallback.description,
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [repo, router]);
 
   // Load the selected repo's saved conversation once. Re-selecting the same
   // repo keeps the already-loaded thread instead of re-fetching.
@@ -256,7 +291,7 @@ export function ChatView() {
 
   function handleChangeRepo() {
     clearSelectedRepo();
-    router.push("/get-started");
+    router.push("/upload-repo");
   }
 
   return (
@@ -296,7 +331,7 @@ export function ChatView() {
                     No repository connected yet — pick one to get grounded answers.
                   </p>
                   <a
-                    href="/get-started"
+                    href="/upload-repo"
                     className="shrink-0 rounded-lg bg-accent px-3 py-1.5 text-[13px] font-medium text-accent-foreground transition-[filter] hover:brightness-110"
                   >
                     Connect repo
@@ -391,7 +426,7 @@ export function ChatView() {
               <p className="mt-2 px-1 text-[11.5px] text-muted">
                 {repo
                   ? `Enter to send · Shift+Enter for a new line. Answers cite the files they used.`
-                  : "Connect a repository on /get-started, then this chat reads only its code."}
+                  : "Connect a repository on /upload-repo, then this chat reads only its code."}
               </p>
             </form>
           </div>

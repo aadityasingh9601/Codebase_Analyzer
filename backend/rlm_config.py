@@ -37,6 +37,29 @@ ai_api_key: str = os.getenv("AI_API_KEY")
 
 DEFAULT_MODEL = "cohere/north-mini-code:free"
 
+# BYOK defaults per provider, used only when a caller provides that provider's
+# own API key. The free env-fallback model above stays the OpenRouter default.
+DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+DEFAULT_ANTHROPIC_MODEL = "claude-3-5-haiku-latest"
+
+PROVIDER_BACKENDS: dict[str, tuple[str, str]] = {
+    "openrouter": ("openrouter", DEFAULT_MODEL),
+    "openai": ("openai", DEFAULT_OPENAI_MODEL),
+    "anthropic": ("anthropic", DEFAULT_ANTHROPIC_MODEL),
+}
+
+
+def resolve_provider_backend(provider: str) -> tuple[str, str]:
+    """Map a provider id to its `(rlm backend, default model)` pair.
+
+    Unknown values raise so a bad client value fails fast with a clear message
+    instead of confusing the model provider later.
+    """
+    key = (provider or "openrouter").strip().lower()
+    if key not in PROVIDER_BACKENDS:
+        raise ValueError(f"Unsupported API provider: {provider!r}")
+    return PROVIDER_BACKENDS[key]
+
 
 def guess_light_path(full_json_path: str) -> str:
     """`.../codebase_x.json` -> `.../codebase_x_lightweight.json`."""
@@ -197,12 +220,19 @@ def create_rlm(
     logger=None,
     model_name: str = DEFAULT_MODEL,
     sys_prompt: str = "distilled",
+    provider: str = "openrouter",
+    api_key: str = "",
 ) -> RLM:
     """Build an RLM bound to one repository's index.
 
     Unlike the old zero-argument factory, the repo is not baked into a
     module-level constant: each instance gets its own setup code pointing at
     the index for the session it serves.
+
+    `provider` selects the backend and default model; `api_key` is the
+    per-request BYOK key passed straight through to the provider client. When
+    `api_key` is empty the process env `AI_API_KEY` is used (CLI / server
+    default), so nothing that calls this without a key changes behaviour.
 
     Also prepares the REPL eagerly. `PersistentSession.init_env()` runs the
     setup code and sets `_skip_next_context_add`, which is what stops RLM from
@@ -216,17 +246,27 @@ def create_rlm(
     if not session_id:
         session_id = os.getenv("CODEBASE_SESSION_ID", "repl")
 
+    backend, provider_default_model = resolve_provider_backend(provider)
+    effective_model = (
+        model_name if model_name and model_name != DEFAULT_MODEL else provider_default_model
+    )
+    effective_api_key = api_key or ai_api_key
+    if not effective_api_key:
+        raise ValueError(
+            f"No API key available for provider {provider!r}. "
+            "Pass a key for this request or set AI_API_KEY for the server default."
+        )
+
     if sys_prompt == "distilled":
         custom_system_prompt, orchestrator = SYSTEM_PROMPT_CODEBASE, False
     else:
         custom_system_prompt, orchestrator = None, True
 
     rlm = RLM(
-        backend="openrouter",
-        # all supported providers list -> ["openai", "portkey", "openrouter", "vllm", "anthropic"]
+        backend=backend,
         backend_kwargs={
-            "model_name": model_name,
-            "api_key": ai_api_key,
+            "model_name": effective_model,
+            "api_key": effective_api_key,
         },
         environment="local",
         environment_kwargs={

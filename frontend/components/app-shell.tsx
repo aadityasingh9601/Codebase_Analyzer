@@ -38,6 +38,7 @@ export function AppShell({
           <nav className="hidden items-center gap-1 sm:flex">
             <NavLink href="/upload-repo">New repo</NavLink>
             <NavLink href="/chat">Chat</NavLink>
+            <NavLink href="/keys">API key</NavLink>
           </nav>
 
           {repo ? (

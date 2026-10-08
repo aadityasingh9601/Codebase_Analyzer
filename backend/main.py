@@ -3,9 +3,13 @@ main.py — HTTP API for RepoChat.
 
     POST /api/loadrepo    index a GitHub repository and store it in Supabase
     GET  /api/repos       metadata for the caller's uploaded repositories
-    POST /api/userquery   answer a question about one of those repositories
+    GET  /api/userquery   answer a question about one of those repositories
     GET  /api/messages    a repository conversation's saved messages
     POST /api/messages    persist one user or assistant message
+    GET  /api/keys        list the caller's stored BYOK key "hints"
+    GET  /api/keys/{provider}   a stored key's encrypted blob (for local unlock)
+    PUT  /api/keys        upsert a key's encrypted blob + hint
+    DELETE /api/keys/{provider} remove a stored key
     GET  /api/health      liveness probe
 
 Repositories are PRIVATE to the user who uploaded them. When the web app
@@ -41,6 +45,15 @@ supabase_messages_table.sql). Every read and write first resolves that repo by
 `user_id` + `id` — the same ownership rule as everything else — so messages
 are as private as the repos they belong to.
 
+`/api/keys*` are the BYOK ("bring your own key") endpoints. The browser
+encrypts the user's provider API key with a password-derived AES-GCM key and
+sends only the encrypted blob (plus a last-4 hint); the server stores it in the
+`user_api_keys` table (see supabase_user_api_keys.sql) and serves it back on
+request so the browser can decrypt it locally. The plaintext key never touches
+these endpoints — the blob is opaque. `POST /api/userquery` additionally
+accepts an optional `provider` + `api_key` for that single request; it is used
+once for the answer and discarded, never stored or logged.
+
 Auth: callers send the Supabase access token as `Authorization: Bearer <jwt>`,
 the same token the browser holds. It is verified against the project's JWKS, so
 the endpoint is not open to anyone. Set `SUPABASE_JWKS_URL` in the environment
@@ -74,7 +87,7 @@ from typing import Literal
 import httpx
 import jwt
 from dotenv import load_dotenv
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
@@ -262,6 +275,45 @@ class UserQueryRequest(BaseModel):
         description="owner/repo to query. Omit if you have exactly one connected repository.",
         examples=["pallets/click"],
     )
+    provider: Literal["openrouter", "openai", "anthropic"] | None = Field(
+        None,
+        description="BYOK provider for this request. Defaults to openrouter.",
+    )
+    api_key: str | None = Field(
+        None,
+        min_length=1,
+        max_length=8192,
+        description=(
+            "The caller's provider key for this one request. Used once and "
+            "discarded; never stored at rest anywhere. Omit to use the server's "
+            "default model credential."
+        ),
+    )
+
+
+class SaveApiKeyRequest(BaseModel):
+    provider: Literal["openrouter", "openai", "anthropic"] = Field(...)
+    encrypted_blob: str = Field(
+        ...,
+        min_length=20,
+        max_length=8192,
+        description="The key encrypted client-side (salt||iv||cipher, base64). Opaque to the server.",
+    )
+    key_hint: str = Field(
+        ...,
+        min_length=4,
+        max_length=16,
+        description="A non-secret identifier for the list UI, e.g. the last 4 chars.",
+    )
+
+
+class ApiKeyInfo(BaseModel):
+    provider: str = Field(..., description="Provider id, e.g. 'openrouter'.")
+    key_hint: str = Field(..., description="The stored last-N hint for this provider's key.")
+
+
+class ListApiKeysResponse(BaseModel):
+    keys: list[ApiKeyInfo] = Field(default_factory=list)
 
 
 class UserQueryResponse(BaseModel):
@@ -460,6 +512,10 @@ def verify_bearer_token(authorization: str) -> str:
 
 REPOS_TABLE = "repos"
 MESSAGES_TABLE = "messages"
+API_KEYS_TABLE = "user_api_keys"
+
+# The same whitelist as the `user_api_keys.provider` CHECK constraint.
+ALLOWED_PROVIDERS = ("openrouter", "openai", "anthropic")
 
 
 def _db():
@@ -471,6 +527,62 @@ def _db():
     if not url or not key:
         raise RuntimeError("Supabase env vars missing")
     return create_client(url, key)
+
+
+# ---------------------------------------------------------------------------
+# `user_api_keys` table (BYOK blobs — the server never sees the plaintext key)
+# ---------------------------------------------------------------------------
+
+def _require_provider(provider: str) -> str:
+    """Validate a provider id, raising 422 with a clear message otherwise."""
+    if provider not in ALLOWED_PROVIDERS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unsupported API provider: {provider!r}. Allowed: {', '.join(ALLOWED_PROVIDERS)}.",
+        )
+    return provider
+
+
+def _list_user_api_keys(user_id: str) -> list[dict]:
+    data = (
+        _db()
+        .table(API_KEYS_TABLE)
+        .select("provider, key_hint")
+        .eq("user_id", user_id)
+        .order("provider")
+        .execute()
+    )
+    return list(data.data or [])
+
+
+def _get_user_api_key(user_id: str, provider: str) -> dict | None:
+    data = (
+        _db()
+        .table(API_KEYS_TABLE)
+        .select("encrypted_blob, key_hint")
+        .eq("user_id", user_id)
+        .eq("provider", provider)
+        .limit(1)
+        .execute()
+    )
+    rows = list(data.data or [])
+    return rows[0] if rows else None
+
+
+def _upsert_api_key(user_id: str, provider: str, encrypted_blob: str, key_hint: str) -> None:
+    _db().table(API_KEYS_TABLE).upsert(
+        {
+            "user_id": user_id,
+            "provider": provider,
+            "encrypted_blob": encrypted_blob,
+            "key_hint": key_hint,
+        },
+        on_conflict="user_id,provider",
+    ).execute()
+
+
+def _delete_api_key(user_id: str, provider: str) -> None:
+    _db().table(API_KEYS_TABLE).delete().eq("user_id", user_id).eq("provider", provider).execute()
 
 
 def _list_user_repos(user_id: str) -> list[dict]:
@@ -1101,6 +1213,57 @@ def _download_index(user_id: str, owner: str, repo: str, sha: str, full_path: st
             raise RuntimeError(f"Empty index object for {repo}@{sha[:7]}")
 
 
+# ---------------------------------------------------------------------------
+# BYOK API keys
+# ---------------------------------------------------------------------------
+
+@app.get("/api/keys", response_model=ListApiKeysResponse)
+def list_keys(authorization: str = Header(default="")) -> ListApiKeysResponse:
+    """Provider ids + non-secret hints for the caller's stored key blobs."""
+    user_id = verify_bearer_token(authorization)
+    rows = _list_user_api_keys(user_id or "")
+    return ListApiKeysResponse(
+        keys=[ApiKeyInfo(provider=r["provider"], key_hint=r["key_hint"]) for r in rows]
+    )
+
+
+@app.get("/api/keys/{provider}")
+def get_key(provider: str, authorization: str = Header(default="")) -> dict:
+    """Serve a caller's encrypted key blob back for local decryption.
+
+    The blob is opaque base64 (salt || iv || AES-GCM ciphertext); returning it
+    is safe because only the browser holds the password that can decrypt it.
+    """
+    user_id = verify_bearer_token(authorization) or ""
+    _require_provider(provider)
+    row = _get_user_api_key(user_id, provider)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"No stored API key for provider {provider!r}.")
+    return {"provider": provider, "encrypted_blob": row["encrypted_blob"], "key_hint": row["key_hint"]}
+
+
+@app.put("/api/keys", response_model=ApiKeyInfo)
+def save_key(payload: SaveApiKeyRequest, authorization: str = Header(default="")) -> ApiKeyInfo:
+    """Store (or replace) a provider's encrypted key blob + hint.
+
+    The server treats the blob as opaque and never logs it. Ownership is the
+    caller's verified Supabase user id, so one user's keys are never exposed to
+    another.
+    """
+    user_id = verify_bearer_token(authorization) or ""
+    _require_provider(payload.provider)
+    _upsert_api_key(user_id, payload.provider, payload.encrypted_blob, payload.key_hint)
+    return ApiKeyInfo(provider=payload.provider, key_hint=payload.key_hint)
+
+
+@app.delete("/api/keys/{provider}", status_code=204)
+def delete_key(provider: str, authorization: str = Header(default="")) -> Response:
+    user_id = verify_bearer_token(authorization) or ""
+    _require_provider(provider)
+    _delete_api_key(user_id, provider)
+    return Response(status_code=204)
+
+
 @app.post("/api/userquery", response_model=UserQueryResponse)
 async def userquery(payload: UserQueryRequest, authorization: str = Header(default="")) -> UserQueryResponse:
     """Answer a question about one of the caller's own repositories.
@@ -1122,6 +1285,13 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
     question = payload.question.strip()
     if not question:
         raise HTTPException(status_code=422, detail="question must not be empty")
+
+    # BYOK credentials for this one request. The key never gets logged or
+    # stored; empty means "use the server's default model credential."
+    provider = _require_provider((payload.provider or "openrouter").strip().lower())
+    api_key = (payload.api_key or "").strip()
+    if not api_key:
+        api_key = ""
 
     row = _user_repo_target(user_id, payload.repo_name or "")
     repo_name = row["repo_name"]
@@ -1151,7 +1321,13 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
 
             try:
                 result = await run_in_threadpool(
-                    query_router.answer_for_session, session_id, full_path, light_path, payload.question
+                    query_router.answer_for_session,
+                    session_id,
+                    full_path,
+                    light_path,
+                    payload.question,
+                    provider,
+                    api_key,
                 )
             except FileNotFoundError as e:
                 raise HTTPException(status_code=404, detail=_query_error_detail(e)) from e

@@ -174,3 +174,12 @@ export function ReloadIcon(props: IconProps) {
     </Base>
   );
 }
+
+export function KeyIcon(props: IconProps) {
+  return (
+    <Base {...props}>
+      <circle cx="8" cy="15" r="4.5" />
+      <path d="M11 12l9-9M15.5 7.5l3 3M12.5 10.5l2 2" />
+    </Base>
+  );
+}

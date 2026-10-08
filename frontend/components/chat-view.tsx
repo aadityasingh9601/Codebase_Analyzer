@@ -3,11 +3,13 @@
 import { memo, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { RepoSidebar } from "@/components/repo-sidebar";
-import { CopyIcon, CheckIcon, SendIcon, SpinnerIcon, FileIcon, ReloadIcon } from "@/components/icons";
+import { CopyIcon, CheckIcon, SendIcon, SpinnerIcon, FileIcon, ReloadIcon, KeyIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { useSelectedRepo } from "@/hooks/use-selected-repo";
+import { useActiveApiKey } from "@/hooks/use-active-api-key";
 import { clearSelectedRepo, writeSelectedRepo, type SelectedRepo } from "@/lib/repo";
 import { askQuestion } from "@/app/lib/actions/askQuestion";
 import { getUserRepos } from "@/app/lib/actions/getUserRepos";
@@ -130,6 +132,7 @@ async function persistConversation(
 export function ChatView() {
   const router = useRouter();
   const repo = useSelectedRepo();
+  const activeKey = useActiveApiKey();
   const [messages, setMessages] = useState<Message[]>(() => initialMessages(repo));
   const [input, setInput] = useState("");
   const [responding, setResponding] = useState(false);
@@ -272,7 +275,15 @@ export function ChatView() {
       setInput("");
       setResponding(true);
 
-      const result = await askQuestion(content, repo.slug);
+      const result = await askQuestion(
+        content,
+        repo.slug,
+        // A key unlocked in this tab supplies the provider + per-request key.
+        // Without one the backend answers using the free default model.
+        activeKey
+          ? { provider: activeKey.provider, apiKey: activeKey.apiKey }
+          : undefined,
+      );
 
       setMessages((prev) =>
         prev.map((m) => {
@@ -298,7 +309,7 @@ export function ChatView() {
       // but a database hiccup must never disturb the chat itself.
       void persistConversation(repo, content, result);
     },
-    [repo, responding],
+    [repo, responding, activeKey],
   );
 
   // Retry a past question from its message bubble — identical to typing the
@@ -360,6 +371,22 @@ export function ChatView() {
                   </a>
                 </div>
               )}
+
+              {repo && !activeKey ? (
+                <div className="mb-5 flex items-center justify-between gap-3 rounded-xl border border-border-base bg-surface-subtle px-4 py-3">
+                  <p className="flex items-center gap-2 text-[12.5px] leading-relaxed text-muted">
+                    <KeyIcon className="h-4 w-4 shrink-0" />
+                    Someone answers with the free default model. Bring your own
+                    provider key to talk to your own model.
+                  </p>
+                  <Link
+                    href="/keys"
+                    className="shrink-0 rounded-lg bg-accent px-3 py-1.5 text-[13px] font-medium text-accent-foreground transition-[filter] hover:brightness-110"
+                  >
+                    Add key
+                  </Link>
+                </div>
+              ) : null}
 
               {repo?.id && historyLoading ? (
                 <p className="mb-5 flex items-center gap-1.5 text-[12.5px] text-muted">

@@ -7,7 +7,7 @@ from typing import Optional
 
 from rlm import RLM
 from rlm.clients import get_client
-from rlm_config import DEFAULT_MODEL, ai_api_key
+from rlm_config import DEFAULT_MODEL, ai_api_key, resolve_provider_backend
 from session_index import (
     acquire_session,
     close_session,
@@ -122,12 +122,13 @@ def _serialize_index(index: dict) -> str:
     return text
 
 
-def _client() -> "object":
+def _client(provider: str = "openrouter", api_key: str = "") -> "object":
+    backend, model = resolve_provider_backend(provider)
     return get_client(
-        "openrouter",
+        backend,
         {
-            "model_name": DEFAULT_MODEL,
-            "api_key": ai_api_key,
+            "model_name": model,
+            "api_key": api_key or ai_api_key,
             "sampling_args": {"max_tokens": GAUGE_MAX_OUTPUT_TOKENS},
         },
     )
@@ -269,10 +270,16 @@ def _parse_response(response: str, file_tree: list[str]) -> tuple[str, list[str]
     return "UNSURE", []
 
 
-def _escalate_to_rlm(rlm: Optional[RLM], question: str, reason: str) -> RouterResult:
+def _escalate_to_rlm(
+    rlm: Optional[RLM],
+    question: str,
+    reason: str,
+    provider: str = "openrouter",
+    api_key: str = "",
+) -> RouterResult:
     start = time.perf_counter()
     if rlm is None:
-        rlm = _create_default_rlm()
+        rlm = _create_default_rlm(provider=provider, api_key=api_key)
         close_after = True
     else:
         close_after = False
@@ -311,14 +318,19 @@ def _escalate_to_rlm(rlm: Optional[RLM], question: str, reason: str) -> RouterRe
     )
 
 
-def route_and_answer(question: str, rlm: Optional[RLM] = None) -> RouterResult:
+def route_and_answer(
+    question: str,
+    rlm: Optional[RLM] = None,
+    provider: str = "openrouter",
+    api_key: str = "",
+) -> RouterResult:
     start = time.perf_counter()
     index_text = _serialize_index(_load_index())
     file_tree = _file_tree()
 
     category, reason = heuristic_route(question)
     if category == "RLM":
-        return _escalate_to_rlm(rlm, question, reason)
+        return _escalate_to_rlm(rlm, question, reason, provider=provider, api_key=api_key)
     if category == "META":
         tier = "META"
         allow_files = False
@@ -328,7 +340,7 @@ def route_and_answer(question: str, rlm: Optional[RLM] = None) -> RouterResult:
         allow_files = True
         route_reason = "ambiguous -> gauge"
 
-    client = _client()
+    client = _client(provider=provider, api_key=api_key)
     evidence_paths: list[str] = []
     evidence_text = ""
     prior_in, prior_out = _snapshot_tokens(client)
@@ -339,13 +351,18 @@ def route_and_answer(question: str, rlm: Optional[RLM] = None) -> RouterResult:
         evidence_text = _retrieve(named)
         route_reason += f"; preloaded named files {named}"
 
+    _, gauge_model = resolve_provider_backend(provider)
     for round_idx in range(GAUGE_ROUNDS):
         messages = _gauge_messages(question, index_text, evidence_text, allow_files)
         try:
-            response = client.completion(messages, model=DEFAULT_MODEL)
+            response = client.completion(messages, model=gauge_model)
         except Exception as exc:
             return _escalate_to_rlm(
-                rlm, question, f"direct tier failed (round {round_idx}): {exc}"
+                rlm,
+                question,
+                f"direct tier failed (round {round_idx}): {exc}",
+                provider=provider,
+                api_key=api_key,
             )
 
         kind, payload = _parse_response(response, file_tree)
@@ -375,7 +392,9 @@ def route_and_answer(question: str, rlm: Optional[RLM] = None) -> RouterResult:
         break
 
     in_tok, out_tok = _snapshot_tokens(client)
-    result = _escalate_to_rlm(rlm, question, route_reason)
+    result = _escalate_to_rlm(
+        rlm, question, route_reason, provider=provider, api_key=api_key
+    )
     result.direct_calls = GAUGE_ROUNDS
     result.direct_input_tokens = in_tok - prior_in
     result.direct_output_tokens = out_tok - prior_out
@@ -383,7 +402,10 @@ def route_and_answer(question: str, rlm: Optional[RLM] = None) -> RouterResult:
     return result
 
 
-def _create_default_rlm() -> RLM:
+def _create_default_rlm(
+    provider: str = "openrouter",
+    api_key: str = "",
+) -> RLM:
     """Fallback RLM for the current session (CLI use, tests).
 
     The HTTP path always passes an explicit `rlm` built by the session
@@ -403,6 +425,8 @@ def _create_default_rlm() -> RLM:
         full_json_path=full_path,
         light_json_path=light_path,
         session_id=current_session_id(),
+        provider=provider,
+        api_key=api_key,
     )
 
 
@@ -411,6 +435,8 @@ def answer_for_session(
     full_json_path: str,
     light_json_path: str,
     question: str,
+    provider: str = "openrouter",
+    api_key: str = "",
 ) -> RouterResult:
     """Answer `question` for one self-contained, per-user session.
 
@@ -419,6 +445,9 @@ def answer_for_session(
     There is no registry, no reuse and nothing shared across users or
     requests — the caller hands us the paths to one user's private index files
     and a session id under that user's namespace.
+
+    `provider`/`api_key` are the caller's BYOK credentials for this request
+    only. When `api_key` is empty the process env default applies.
 
     Call from a worker thread when the event loop must stay responsive.
     """
@@ -436,8 +465,10 @@ def answer_for_session(
             full_json_path=full_json_path,
             light_json_path=light_json_path,
             session_id=session_id,
+            provider=provider,
+            api_key=api_key,
         )
-        return route_and_answer(question, rlm=rlm)
+        return route_and_answer(question, rlm=rlm, provider=provider, api_key=api_key)
     finally:
         reset_default_session_id(token)
         if rlm is not None:

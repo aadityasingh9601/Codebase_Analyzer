@@ -52,9 +52,24 @@ export type AskResult =
  * Ask about `repoName` (owner/repo). The repo must be one of the caller's own
  * connected repositories; the backend answers against the commit it indexed.
  */
+/**
+ * The caller's BYOK key for this one request, if any. The plaintext travels
+ * from this tab's sessionStorage to the backend over HTTPS, is used for that
+ * single request, and is never persisted anywhere.
+ */
+export type RequestCredentials = {
+  provider?: string;
+  apiKey?: string;
+};
+
+/**
+ * Ask about `repoName` (owner/repo). The repo must be one of the caller's own
+ * connected repositories; the backend answers against the commit it indexed.
+ */
 export async function askQuestion(
   question: string,
   repoName?: string,
+  credentials?: RequestCredentials,
 ): Promise<AskResult> {
   if (!repoName) {
     // Guard against the no-repo chat; the UI disables asking, but a stray call
@@ -85,7 +100,13 @@ export async function askQuestion(
     response = await fetch(`${getBackendUrl()}/api/userquery`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ question, repo_name: repoName }),
+      body: JSON.stringify({
+        question,
+        repo_name: repoName,
+        // provider defaults server-side to openrouter; the key is used once.
+        provider: credentials?.provider,
+        api_key: credentials?.apiKey,
+      }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
       // The query can take minutes; do not let Next's fetch fail first.
       cache: "no-store",

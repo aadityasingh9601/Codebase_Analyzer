@@ -1,11 +1,11 @@
 "use client";
 
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { RepoSidebar } from "@/components/repo-sidebar";
-import { MarkdownContent } from "@/components/markdown-content";
-import { CopyIcon, CheckIcon, SendIcon, SpinnerIcon, FileIcon } from "@/components/icons";
+import { CopyIcon, CheckIcon, SendIcon, SpinnerIcon, FileIcon, ReloadIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { useSelectedRepo } from "@/hooks/use-selected-repo";
 import { clearSelectedRepo, writeSelectedRepo, type SelectedRepo } from "@/lib/repo";
@@ -15,6 +15,15 @@ import {
   fetchMessages,
   saveMessage,
 } from "@/app/lib/actions/messages";
+
+// Markdown rendering (react-markdown + remark-gfm + highlight.js) is by far
+// the heaviest dependency on the chat screen. Loading it into its own async
+// chunk and rendering it only on the client keeps the rest of the page (input
+// composer, sidebar, layout) responsive while messages hydrate.
+const MarkdownContent = dynamic(
+  () => import("@/components/markdown-content").then((mod) => mod.MarkdownContent),
+  { ssr: false },
+);
 
 export type Message = {
   id: string;
@@ -241,53 +250,66 @@ export function ChatView() {
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [input]);
 
-  async function send(text: string) {
-    const content = text.trim();
-    if (!content || responding || !repo) return;
+  const send = useCallback(
+    async (text: string) => {
+      const content = text.trim();
+      if (!content || responding || !repo) return;
 
-    conversationSeq.current += 1;
+      conversationSeq.current += 1;
 
-    const userMessage: Message = {
-      id: nextMessageId("u"),
-      role: "user",
-      content,
-    };
-    const replyId = nextMessageId("a");
+      const userMessage: Message = {
+        id: nextMessageId("u"),
+        role: "user",
+        content,
+      };
+      const replyId = nextMessageId("a");
 
-    setMessages((prev) => [
-      ...prev,
-      userMessage,
-      { id: replyId, role: "assistant", content: "", pending: true },
-    ]);
-    setInput("");
-    setResponding(true);
+      setMessages((prev) => [
+        ...prev,
+        userMessage,
+        { id: replyId, role: "assistant", content: "", pending: true },
+      ]);
+      setInput("");
+      setResponding(true);
 
-    const result = await askQuestion(content, repo.slug);
+      const result = await askQuestion(content, repo.slug);
 
-    setMessages((prev) =>
-      prev.map((m) => {
-        if (m.id !== replyId) return m;
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== replyId) return m;
 
-        if (!result.ok) {
-          return { ...m, pending: false, error: result.error };
-        }
+          if (!result.ok) {
+            return { ...m, pending: false, error: result.error };
+          }
 
-        return {
-          ...m,
-          pending: false,
-          content: result.query.answer,
-          sources: result.query.evidencePaths,
-          error: result.query.error ?? undefined,
-        };
-      }),
-    );
+          return {
+            ...m,
+            pending: false,
+            content: result.query.answer,
+            sources: result.query.evidencePaths,
+            error: result.query.error ?? undefined,
+          };
+        }),
+      );
 
-    setResponding(false);
+      setResponding(false);
 
-    // Best-effort persistence: saved so the conversation survives the session,
-    // but a database hiccup must never disturb the chat itself.
-    void persistConversation(repo, content, result);
-  }
+      // Best-effort persistence: saved so the conversation survives the session,
+      // but a database hiccup must never disturb the chat itself.
+      void persistConversation(repo, content, result);
+    },
+    [repo, responding],
+  );
+
+  // Retry a past question from its message bubble — identical to typing the
+  // question again (same backend call, fresh answer). No-op while a reply is
+  // already in flight (the guard lives inside `send`).
+  const handleRetry = useCallback(
+    (content: string) => {
+      void send(content);
+    },
+    [send],
+  );
 
   function handleChangeRepo() {
     clearSelectedRepo();
@@ -354,7 +376,7 @@ export function ChatView() {
 
               <div className="space-y-7">
                 {messages.map((m) => (
-                  <MessageBubble key={m.id} message={m} />
+                  <MessageBubble key={m.id} message={m} onRetry={repo ? handleRetry : undefined} />
                 ))}
               </div>
 
@@ -438,7 +460,13 @@ export function ChatView() {
 
 // Memoized: typing in the input re-renders ChatView, but message objects are
 // stable — without this, every keystroke re-parses ALL markdown/highlighting.
-const MessageBubble = memo(function MessageBubble({ message }: { message: Message }) {
+const MessageBubble = memo(function MessageBubble({
+  message,
+  onRetry,
+}: {
+  message: Message;
+  onRetry?: (content: string) => void;
+}) {
   const [copied, setCopied] = useState(false);
 
   async function copy() {
@@ -453,10 +481,21 @@ const MessageBubble = memo(function MessageBubble({ message }: { message: Messag
 
   if (message.role === "user") {
     return (
-      <div className="flex justify-end">
+      <div className="group relative flex justify-end">
         <div className="max-w-[85%] rounded-2xl rounded-br-md bg-accent px-4 py-2.5 text-[14px] leading-relaxed text-accent-foreground whitespace-pre-wrap">
           {message.content}
         </div>
+        {onRetry ? (
+          <button
+            type="button"
+            onClick={() => onRetry(message.content)}
+            aria-label="Ask this question again"
+            title="Ask again"
+            className="absolute -bottom-3.5 right-1 flex h-6 w-6 items-center justify-center rounded-full border border-border-base bg-background text-muted opacity-0 shadow-sm transition-[opacity,background-color,color] hover:bg-surface-subtle hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+          >
+            <ReloadIcon className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
       </div>
     );
   }
@@ -480,7 +519,15 @@ const MessageBubble = memo(function MessageBubble({ message }: { message: Messag
         {message.pending && !message.content ? (
           <span className="inline-block h-4 w-[2px] animate-pulse bg-accent align-text-bottom" />
         ) : (
-          <MarkdownContent content={message.content} />
+          <Suspense
+            fallback={
+              <p className="text-[13.5px] leading-relaxed text-foreground whitespace-pre-wrap">
+                {message.content}
+              </p>
+            }
+          >
+            <MarkdownContent content={message.content} />
+          </Suspense>
         )}
 
         {message.error ? (

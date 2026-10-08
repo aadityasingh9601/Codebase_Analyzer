@@ -32,8 +32,10 @@ ai_api_key: str = os.getenv("AI_API_KEY")
 # "apodex/apodex-1.1-mini:free" -> Slighty slow but usable, good respones. Rank 1. (prints files with code blocks)
 # "cohere/north-mini-code:free" -> Good responses, can be used.
 # "google/gemma-4-26b-a4b-it:free" -> Good but gets rate-limited very quickly.
+# "nvidia/nemotron-3-super-120b-a12b:free" -> Good, doesn't outputs in code blocks also can mess up with big code files, Rank 3-4.
+# "openrouter/free" -> Very slow & showt respones.
 
-DEFAULT_MODEL = "openrouter/free"
+DEFAULT_MODEL = "cohere/north-mini-code:free"
 
 
 def guess_light_path(full_json_path: str) -> str:

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { RepoSidebar } from "@/components/repo-sidebar";
@@ -436,7 +436,9 @@ export function ChatView() {
   );
 }
 
-function MessageBubble({ message }: { message: Message }) {
+// Memoized: typing in the input re-renders ChatView, but message objects are
+// stable — without this, every keystroke re-parses ALL markdown/highlighting.
+const MessageBubble = memo(function MessageBubble({ message }: { message: Message }) {
   const [copied, setCopied] = useState(false);
 
   async function copy() {
@@ -531,7 +533,7 @@ function MessageBubble({ message }: { message: Message }) {
       </div>
     </div>
   );
-}
+});
 
 /** Real index metadata for a connected repo; absent for a hand-typed URL. */
 function IndexedFacts({ repo }: { repo: NonNullable<SelectedRepo> }) {

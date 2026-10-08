@@ -24,14 +24,16 @@ ai_api_key: str = os.getenv("AI_API_KEY")
 # constant, so changing the model here and restarting the server is all it takes.
 
 # "nvidia/nemotron-3.5-lightning:free" -> Also very slow.
-# "inclusionai/ling-3.0-flash-sante:free" -> Good but gets rate-limited very quickly.
-# "dots-studio/dots-3-note-preview:free"
+# "inclusionai/ling-3.0-flash-sante:free" -> Good but gets rate-limited very quickly. Rank 2 (No code blocks)
+# "dots-studio/dots-3-note-preview:free" -> Too slow, too many iterations & token usage, still respones are not good.
 # "thinkingmachines/inkling:free" -> ONlY AVAILABLE WITH AGENTIC HARNESS
 # "nvidia/nemotron-3-super-120b-a12b:free"
 # "nvidia/nemotron-3-ultra-550b-a55b:free" -> Too big, so very slow, followed the markdown format properly.
+# "apodex/apodex-1.1-mini:free" -> Slighty slow but usable, good respones. Rank 1. (prints files with code blocks)
+# "cohere/north-mini-code:free" -> Good responses, can be used.
+# "google/gemma-4-26b-a4b-it:free" -> Good but gets rate-limited very quickly.
 
-
-DEFAULT_MODEL = "inclusionai/ling-3.0-flash-sante:free"
+DEFAULT_MODEL = "openrouter/free"
 
 
 def guess_light_path(full_json_path: str) -> str:
@@ -219,6 +221,7 @@ def create_rlm(
 
     rlm = RLM(
         backend="openrouter",
+        # all supported providers list -> ["openai", "portkey", "openrouter", "vllm", "anthropic"]
         backend_kwargs={
             "model_name": model_name,
             "api_key": ai_api_key,

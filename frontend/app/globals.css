@@ -228,14 +228,42 @@
 }
 
 /*
- * Rendered diagrams (mermaid outputs an <svg>). Same behaviour as GitHub
- * READMEs: scale down to the content width, keep proportions, centre. With the
- * viewBox mermaid emits, a wide flowchart shrinks to fit fully instead of
- * being cut off or needing sideways scrolling.
+ * Rendered diagrams (mermaid outputs an <svg>). Unlike the rest of the
+ * markdown body, a diagram is never shrunk to fit the column: it renders at
+ * its natural size inside a pane that is bounded in height and scrolls, so a
+ * tall or wide chart scrolls WITHIN the chat message instead of stretching
+ * the whole chat interface. The +/−/Reset controls scale it with CSS `zoom`
+ * (which grows the scroll area, so nothing becomes unreachable), and the pane
+ * can be panned with mouse-drag or the arrow keys.
  */
-.markdown-body svg {
+.mermaid-wrapper {
+  margin: 1rem 0;
+  padding: 6px 8px;
+  width: 100%;
+  max-height: 440px; /* bounded pane — tall diagrams scroll inside it */
+  overflow: auto; /* scrolls vertically AND horizontally instead of cutting off */
+  overscroll-behavior: contain;
+  cursor: grab;
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  background: hsl(var(--surface-subtle) / 0.5);
+}
+
+/* Mouse-drag panning is active; suppress text selection while dragging. */
+.mermaid-wrapper.grabbing {
+  cursor: grabbing;
+  user-select: none;
+}
+
+/* The pane is focusable so arrow keys can pan it — show where focus is. */
+.mermaid-wrapper:focus-visible {
+  outline: 2px solid hsl(var(--accent) / 0.45);
+  outline-offset: 2px;
+}
+
+.mermaid-wrapper svg {
   display: block;
-  max-width: 100%;
+  max-width: none; /* keep mermaid's natural pixel size — never constrain it */
   height: auto;
   margin-inline: auto;
 }

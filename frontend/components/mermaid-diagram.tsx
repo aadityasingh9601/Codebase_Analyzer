@@ -1,88 +1,218 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { cleanDiagramSource } from "@/lib/mermaid-clean";
 
 /**
- * Renders one ```mermaid fenced block from an assistant answer into a real
- * diagram, the way GitHub renders README diagrams: scaled to fit the container
- * width (never clipped), centered, whole diagram always visible.
+ * Renders one ```mermaid fenced block into a real, interactive diagram.
  *
- * Mermaid is browser-only and heavy, so it is imported lazily inside the
- * effect (never during SSR) and only when a mermaid block actually exists.
- * The theme follows the app's `data-theme` attribute. A failed diagram never
- * kills the note: it falls back to the raw mermaid source in a code block.
+ * Mermaid is ~400KB and needs the browser DOM, so none of it ships until a
+ * diagram actually exists: this component is mounted via `next/dynamic` with
+ * `ssr: false` (see markdown-content), and mermaid itself is `import()`-ed
+ * lazily on first render here. A page that never contains a diagram never
+ * pays for mermaid.
+ *
+ * Diagrams render at their natural size inside a scrollable pane — nothing is
+ * shrunk to fit or cut off — and a tiny +/−/reset control scales them. The
+ * LLM's source goes through a cleanup pipeline before it is drawn: fences,
+ * accidental box-drawing characters (│ ─ …), leading pipes, HTML comments and
+ * stray whitespace are stripped, and unquoted node labels containing mermaid
+ * syntax characters are re-quoted (e.g. `I[router.push('/')]` →
+ * `I["router.push('/')"]`). The cleaned source is validated with
+ * `mermaid.parse()` before `render()`; a diagram that still fails falls back
+ * to a code block of the source with the parser error instead of breaking the
+ * message.
+ *
+ * The `theme` follows the app's `data-theme` attribute; re-initialising mermaid
+ * only happens when the theme actually changes, never per diagram.
  */
+
+const MAX_SCALE = 3;
+const MIN_SCALE = 0.5;
+const SCALE_STEP = 0.2;
+
+/** Pixels panned per arrow-key press. */
+const PAN_STEP = 48;
+
+/** Big enough to stay unique across mounts (React StrictMode re-runs effects). */
+let idCounter = 0;
+
+/** Shared, stable options (theme is applied per use — see `getMermaid`). */
+const BASE_MERMAID_CONFIG = {
+  startOnLoad: false,
+  securityLevel: "strict",
+  theme: "default" as const,
+  // v12 renders flowcharts with the `neo` look + the ELK layout by default.
+  // ELK measures labels without a live DOM, so nodes drift far apart and edges
+  // float between huge gaps. The classic dagre pipeline measures real nodes in
+  // the DOM and packs ranks tightly — a compact, connected flowchart.
+  layout: "dagre",
+  // Natural sizing: `useMaxWidth: false` makes mermaid emit explicit pixel
+  // width/height instead of `width="100%"` with a `max-width` cap, so wide
+  // diagrams no longer get shrunk to fit (the "too small" symptom). Combined
+  // with `max-width: none` on `.mermaid-wrapper svg`, a diagram renders at
+  // full size and the pane scrolls / the zoom buttons scale it.
+  flowchart: { useMaxWidth: false, look: "classic" as const, htmlLabels: true },
+  sequence: { useMaxWidth: false },
+  class: { useMaxWidth: false },
+  state: { useMaxWidth: false },
+  er: { useMaxWidth: false },
+  gantt: { useMaxWidth: false },
+  pie: { useMaxWidth: false },
+  themeVariables: {
+    fontFamily: "ui-sans-serif, system-ui, sans-serif",
+    fontSize: "16px",
+  },
+} satisfies import("mermaid").MermaidConfig;
+
+/** Initialised once per theme; mermaid's config is global, so cache the last one. */
+let initialisedTheme: "dark" | "default" | null = null;
+
+async function getMermaid(theme: "dark" | "default") {
+  const mermaid = (await import("mermaid")).default;
+  if (initialisedTheme !== theme) {
+    mermaid.initialize({ ...BASE_MERMAID_CONFIG, theme });
+    initialisedTheme = theme;
+  }
+  return mermaid;
+}
+
 export function MermaidDiagram({ code, className = "" }: { code: string; className?: string }) {
-  const [ready, setReady] = useState(false);
-  const [failed, setFailed] = useState("");
+  const [svg, setSvg] = useState("");
+  const [error, setError] = useState("");
+  const [scale, setScale] = useState(1);
+  const [grabbing, setGrabbing] = useState(false);
 
-  // The `<div>` mermaid renders into. It is the 3rd arg of `mermaid.render()`:
-  // WITHOUT it, mermaid v12 appends the fully-sized svg to `document.body`
-  // (which the app's fixed full-viewport shell leaves empty — so the diagram
-  // would glitch at a large size in the top-left corner of the screen).
-  // Passing the container keeps the render scoped to our bubble.
-  //
-  // IMPORTANT: the container stays *empty* from React's point of view. Mermaid
-  // clears and writes its svg into it imperatively, so if React owned a child
-  // there the two would fight (React would keep writing to a detached node).
   const containerRef = useRef<HTMLDivElement>(null);
-
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  // Handed-off drag state (mouse drag pans the pane by adjusting scroll).
+  const dragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    left: number;
+    top: number;
+  } | null>(null);
   // Unique per mounted block: mermaid.render() addresses the svg by id.
-  // Generated inside the effect (impure on purpose — never during render).
+  // Generated inside the effect (impure — never during render).
   const renderId = useRef("");
 
-  useEffect(() => {
-    if (!renderId.current) {
-      renderId.current = `mermaid-${Math.random().toString(36).slice(2, 10)}`;
+  function panBy(dx: number, dy: number) {
+    const el = wrapperRef.current;
+    if (!el) return;
+    el.scrollLeft += dx;
+    el.scrollTop += dy;
+  }
+
+  function onPointerDown(e: PointerEvent<HTMLDivElement>) {
+    // Mouse drag pans the pane (touch keeps native scrolling).
+    if (e.pointerType !== "mouse") return;
+    const el = wrapperRef.current;
+    if (!el) return;
+    dragRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      left: el.scrollLeft,
+      top: el.scrollTop,
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setGrabbing(true);
+  }
+
+  function onPointerMove(e: PointerEvent<HTMLDivElement>) {
+    const d = dragRef.current;
+    const el = wrapperRef.current;
+    if (!d || !el) return;
+    el.scrollLeft = d.left - (e.clientX - d.startX);
+    el.scrollTop = d.top - (e.clientY - d.startY);
+  }
+
+  function endDrag(e: PointerEvent<HTMLDivElement>) {
+    const d = dragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    dragRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
     }
+    setGrabbing(false);
+  }
+
+  function onWrapperKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    switch (e.key) {
+      case "ArrowLeft":
+        panBy(-PAN_STEP, 0);
+        e.preventDefault();
+        break;
+      case "ArrowRight":
+        panBy(PAN_STEP, 0);
+        e.preventDefault();
+        break;
+      case "ArrowUp":
+        panBy(0, -PAN_STEP);
+        e.preventDefault();
+        break;
+      case "ArrowDown":
+        panBy(0, PAN_STEP);
+        e.preventDefault();
+        break;
+      default:
+        break;
+    }
+  }
+
+  function resetZoom() {
+    setScale(1);
+    wrapperRef.current?.scrollTo({ left: 0, top: 0 });
+  }
+
+  useEffect(() => {
     let cancelled = false;
-    const dark =
-      typeof document !== "undefined" &&
-      document.documentElement.getAttribute("data-theme") === "dark";
+    if (!renderId.current) {
+      renderId.current = `mermaid-${(++idCounter).toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    }
 
     (async () => {
-      // Reset on re-run (only happens when the block text changes). Kept
-      // inside the async runner so the effect body itself never syncs state.
-      setReady(false);
-      setFailed("");
-      try {
-        const container = containerRef.current;
-        if (!container) throw new Error("diagram container not mounted");
-        container.innerHTML = "";
+      const container = containerRef.current;
+      if (!container) return;
 
-        const { default: mermaid } = await import("mermaid");
-        await mermaid.initialize({
-          startOnLoad: false,
-          securityLevel: "strict",
-          // `useMaxWidth` makes the svg scale down to its container (with a
-          // viewBox to keep proportions) instead of overflowing it — this is
-          // how GitHub README diagrams fit the page. Combined with the
-          // `.markdown-body svg` rule, wide flowcharts are fully visible.
-          // (Set per-diagram: the option lives in each diagram's config block.)
-          flowchart: { useMaxWidth: true },
-          sequence: { useMaxWidth: true },
-          class: { useMaxWidth: true },
-          theme: dark ? "dark" : "default",
-          themeVariables: {
-            fontFamily: "ui-sans-serif, system-ui, sans-serif",
-            fontSize: "16px",
-          },
-        });
-        const { svg } = await mermaid.render(renderId.current, code, container);
-        if (cancelled) return;
-        container.innerHTML = svg;
-        /**
-         * Size of the svg may exceed the container while mermaid fits the
-         * whole diagram into it via the viewBox; overflow-x-auto on the
-         * wrapper then lets extreme cases scroll instead of clipping.
-         */
-        setReady(true);
-      } catch (e) {
-        if (!cancelled) {
-          setFailed(
-            e instanceof Error && e.message ? e.message : "could not render the diagram",
-          );
+      const theme =
+        document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "default";
+
+      try {
+        // Scoped render: the container is the 3rd arg of `mermaid.render()`.
+        // WITHOUT it, mermaid v12 appends the finished, full-size svg to
+        // `<body>` (it would glitch large in the top-left corner of the page).
+        container.innerHTML = "";
+        const mermaid = await getMermaid(theme);
+
+        // Pipeline: AI mermaid → sanitize/normalize → validate → render.
+        const source = cleanDiagramSource(code);
+        // `parse()` validates before we pay for a full render. With
+        // `suppressErrors` it returns false on bad syntax instead of throwing,
+        // and then a second parse (without the flag) surfaces the parser's
+        // detail message for the fallback display.
+        const valid = await mermaid.parse(source, { suppressErrors: true });
+        if (!valid) {
+          let detail = "";
+          try {
+            await mermaid.parse(source);
+          } catch (e) {
+            detail = e instanceof Error ? e.message : String(e);
+          }
+          throw new Error(`Invalid mermaid syntax${detail ? `: ${detail}` : ""}.`);
         }
+
+        const rendered = await mermaid.render(renderId.current, source, container);
+        if (cancelled) return;
+        container.innerHTML = rendered.svg;
+        setSvg(rendered.svg);
+        setScale(1);
+        // Fresh diagram: start the pane back at the top-left corner.
+        wrapperRef.current?.scrollTo({ left: 0, top: 0 });
+      } catch (e) {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : String(e));
       }
     })();
 
@@ -91,28 +221,90 @@ export function MermaidDiagram({ code, className = "" }: { code: string; classNa
     };
   }, [code]);
 
-  if (failed) {
+  if (error) {
     return (
       <div className="my-3 overflow-hidden rounded-xl border border-border-base bg-surface-subtle">
         <p className="border-b border-border-base px-3 py-2 text-[11.5px] text-muted">
-          Could not render the diagram ({failed}). Source:
+          Could not render the diagram (Mermaid error):
         </p>
-        <pre className="scroll-slim max-h-72 overflow-auto whitespace-pre-wrap p-3 font-mono text-[12px] leading-relaxed text-muted">
-          {code}
+        <p className="border-b border-border-base px-3 py-2 font-mono text-[11px] leading-relaxed text-muted">
+          {error}
+        </p>
+        <p className="border-b border-border-base px-3 py-2 text-[11.5px] text-muted">Source:</p>
+        <pre className="scroll-slim m-0 max-h-72 overflow-auto whitespace-pre-wrap p-3 font-mono text-[12px] leading-relaxed text-muted">
+          <code>{code}</code>
         </pre>
       </div>
     );
   }
 
   return (
-    <>
-      {!ready && (
-        <div className="my-3 h-28 animate-pulse rounded-xl border border-border-base bg-surface-subtle" />
-      )}
-      {/* Plain GitHub-style wrapper: no card/chrome around the diagram. The svg
-          is sized and centred by the `.markdown-body svg` rule (max-width:
-          100%, margin-inline: auto) and this wrapper only guards overflow. */}
-      <div ref={containerRef} className={`my-3 overflow-x-auto ${className}`} />
-    </>
+    <div className={`mermaid-wrapper ${className}`}>
+      {svg ? (
+        <div className="flex items-center gap-1.5 pb-2">
+          <button
+            type="button"
+            onClick={() => setScale((s) => Math.min(s + SCALE_STEP, MAX_SCALE))}
+            aria-label="Zoom in"
+            className="flex h-7 w-7 items-center justify-center rounded-md border border-border-base bg-surface text-[13px] font-medium text-muted transition-[border-color,color] hover:border-border-strong hover:text-foreground"
+          >
+            +
+          </button>
+          <button
+            type="button"
+            onClick={() => setScale((s) => Math.max(s - SCALE_STEP, MIN_SCALE))}
+            aria-label="Zoom out"
+            className="flex h-7 w-7 items-center justify-center rounded-md border border-border-base bg-surface text-[13px] font-medium text-muted transition-[border-color,color] hover:border-border-strong hover:text-foreground"
+          >
+            −
+          </button>
+          <button
+            type="button"
+            onClick={resetZoom}
+            className="h-7 rounded-md border border-border-base bg-surface px-2 text-[12px] font-medium text-muted transition-[border-color,color] hover:border-border-strong hover:text-foreground"
+          >
+            Reset
+          </button>
+          {Math.round(scale * 100) !== 100 ? (
+            <button
+              type="button"
+              onClick={() => setScale(1)}
+              className="px-1.5 text-[11px] text-accent underline underline-offset-2"
+            >
+              {Math.round(scale * 100)}%
+            </button>
+          ) : null}
+          <span className="ml-auto hidden text-[11px] text-muted sm:inline">
+            Drag or arrow keys to pan
+          </span>
+        </div>
+      ) : null}
+
+      {!svg && !error ? (
+        <div className="my-0.5 h-28 animate-pulse rounded-lg border border-border-base bg-surface-subtle" />
+      ) : null}
+
+      {/* Focusable, scrollable pane: mouse-drag and arrow keys pan it, and it
+          has a bounded height so long diagrams scroll INSIDE the pane instead
+          of stretching the chat message. */}
+      <div
+        ref={wrapperRef}
+        tabIndex={0}
+        role="region"
+        aria-label="Mermaid diagram — drag or use arrow keys to pan"
+        onKeyDown={onWrapperKeyDown}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        className={`mermaid-wrapper ${grabbing ? "grabbing" : ""} ${className}`}
+      >
+        {/* `zoom` (not transform) so the scroll area grows with the diagram and
+            the whole thing stays reachable at any zoom level. */}
+        <div className="mermaid-scaler" style={{ zoom: scale }}>
+          <div ref={containerRef} />
+        </div>
+      </div>
+    </div>
   );
 }

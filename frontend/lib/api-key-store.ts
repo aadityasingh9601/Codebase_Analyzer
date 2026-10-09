@@ -27,7 +27,9 @@ export const PROVIDER_CHANGE_EVENT = "repochat:provider-changed";
 
 export type ActiveProvider = {
   provider: ProviderId;
-  keyHint: string;
+  /** Last-4 hint of the stored key, when known (set from /keys). Optional so
+   *  the chat composer can persist a provider change without it. */
+  keyHint?: string;
 };
 
 export function isProviderId(value: string): value is ProviderId {

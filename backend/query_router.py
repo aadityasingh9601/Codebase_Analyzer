@@ -323,6 +323,7 @@ def route_and_answer(
     rlm: Optional[RLM] = None,
     provider: str = "openrouter",
     api_key: str = "",
+    model: str = "",
 ) -> RouterResult:
     start = time.perf_counter()
     index_text = _serialize_index(_load_index())
@@ -351,7 +352,12 @@ def route_and_answer(
         evidence_text = _retrieve(named)
         route_reason += f"; preloaded named files {named}"
 
+    # The gauge uses the caller's chosen model when one is given, else that
+    # provider's default. The RLM (route_and_answer's `rlm`, built by the
+    # session) already carries the chosen model in its client.
     _, gauge_model = resolve_provider_backend(provider)
+    if model:
+        gauge_model = model
     for round_idx in range(GAUGE_ROUNDS):
         messages = _gauge_messages(question, index_text, evidence_text, allow_files)
         try:
@@ -437,6 +443,7 @@ def answer_for_session(
     question: str,
     provider: str = "openrouter",
     api_key: str = "",
+    model: str = "",
 ) -> RouterResult:
     """Answer `question` for one self-contained, per-user session.
 
@@ -447,7 +454,9 @@ def answer_for_session(
     and a session id under that user's namespace.
 
     `provider`/`api_key` are the caller's BYOK credentials for this request
-    only. When `api_key` is empty the process env default applies.
+    only. When `api_key` is empty the process env default applies. `model` is
+    the caller's chosen model id for this request; empty selects the
+    provider's default model.
 
     Call from a worker thread when the event loop must stay responsive.
     """
@@ -467,8 +476,9 @@ def answer_for_session(
             session_id=session_id,
             provider=provider,
             api_key=api_key,
+            model_name=model,
         )
-        return route_and_answer(question, rlm=rlm, provider=provider, api_key=api_key)
+        return route_and_answer(question, rlm=rlm, provider=provider, api_key=api_key, model=model)
     finally:
         reset_default_session_id(token)
         if rlm is not None:

@@ -284,6 +284,17 @@ class UserQueryRequest(BaseModel):
             "the server's default model credential."
         ),
     )
+    model: str | None = Field(
+        None,
+        min_length=1,
+        max_length=128,
+        description=(
+            "Provider model id to answer with, e.g. 'gpt-4o-mini', "
+            "'claude-sonnet-4-6', 'google/gemini-2.5-flash'. Must match the "
+            "selected provider; the provider client rejects unknown ids. Omit "
+            "to use that provider's default model."
+        ),
+    )
 
 
 class SaveApiKeyRequest(BaseModel):
@@ -1390,6 +1401,7 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
         `error` populated, so the caller still gets the tier and timing.
     """
     user_id = verify_bearer_token(authorization)
+    print(payload)
 
     question = payload.question.strip()
     if not question:
@@ -1398,12 +1410,14 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
     # BYOK (Phase 2): re-derive the caller's per-user key server-side and
     # decrypt their stored blob for the requested provider — in memory, for
     # this request only. No key travels in the request body. Omitting the
-    # provider means "use the server's default model credential."
+    # provider means "use the server's default model credential." The chosen
+    # model (optional) is passed through to the RLM for this request.
     provider = (payload.provider or "openrouter").strip().lower()
     api_key = ""
     if payload.provider:
         _require_provider(provider)
         api_key = _decrypt_user_provider_key(user_id, provider)
+    model = (payload.model or "").strip()
 
     row = _user_repo_target(user_id, payload.repo_name or "")
     repo_name = row["repo_name"]
@@ -1440,6 +1454,7 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
                     payload.question,
                     provider,
                     api_key,
+                    model,
                 )
             except FileNotFoundError as e:
                 raise HTTPException(status_code=404, detail=_query_error_detail(e)) from e

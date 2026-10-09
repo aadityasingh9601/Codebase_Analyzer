@@ -156,7 +156,8 @@ export function ApiKeySettings() {
                   Active key for this tab
                 </p>
                 <p className="mt-1 text-[12.5px] text-muted">
-                  {PROVIDER_LABELS[activeProvider.provider]} · {activeProvider.keyHint}
+                  {PROVIDER_LABELS[activeProvider.provider]}
+                  {activeProvider.keyHint ? ` · ${activeProvider.keyHint}` : ""}
                 </p>
               </div>
               <Button type="button" size="sm" variant="secondary" onClick={handleStopUsing}>

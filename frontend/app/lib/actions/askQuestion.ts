@@ -53,13 +53,14 @@ export type AskResult =
  * connected repositories; the backend answers against the commit it indexed.
  */
 /**
- * The caller's saved BYOK provider for this request, if any. Only the *id* is
- * sent — the backend re-derives the caller's encryption key, decrypts their
- * stored key blob server-side for that one request, and discards it. The
- * plaintext key never exists in the browser.
+ * The caller's saved BYOK provider + chosen model for this request, if any.
+ * Only the provider *id* and model *id* are sent — the backend re-derives the
+ * caller's encryption key, decrypts their stored key blob server-side for that
+ * one request, and discards it. The plaintext key never exists in the browser.
  */
 export type RequestCredentials = {
   provider?: string;
+  model?: string;
 };
 
 /**
@@ -104,8 +105,9 @@ export async function askQuestion(
         question,
         repo_name: repoName,
         // provider defaults server-side to openrouter; the caller's stored key
-        // is decrypted on the server for this request only.
+        // is decrypted on the server for this request only. model drives the RLM.
         provider: credentials?.provider,
+        model: credentials?.model,
       }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
       // The query can take minutes; do not let Next's fetch fail first.

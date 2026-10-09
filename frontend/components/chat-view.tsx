@@ -11,6 +11,12 @@ import { Button } from "@/components/ui/button";
 import { useSelectedRepo } from "@/hooks/use-selected-repo";
 import { useActiveProvider } from "@/hooks/use-active-provider";
 import { clearSelectedRepo, writeSelectedRepo, type SelectedRepo } from "@/lib/repo";
+import { setActiveProvider, type ProviderId } from "@/lib/api-key-store";
+import {
+  ProviderModelSelector,
+  firstModel,
+  type ProviderModelSelection,
+} from "@/components/providerModelSelector";
 import { askQuestion } from "@/app/lib/actions/askQuestion";
 import { getUserRepos } from "@/app/lib/actions/getUserRepos";
 import {
@@ -93,6 +99,11 @@ export function ChatView() {
   const [responding, setResponding] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState("");
+
+  // Provider + model for the next question. Default provider is OpenRouter,
+  // per the UI spec; changing the provider resets the model to its first one.
+  const [provider, setProvider] = useState<ProviderId>("openrouter");
+  const [model, setModel] = useState<string>(() => firstModel("openrouter"));
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -244,10 +255,10 @@ export function ChatView() {
       const result = await askQuestion(
         content,
         repo.slug,
-        // A provider chosen in this tab supplies the BYOK provider id; the
-        // backend decrypts the caller's stored key server-side for the request.
-        // Without one it answers using the free default model.
-        activeProvider ? { provider: activeProvider.provider } : undefined,
+        // The composer's provider + model drive this request. The backend
+        // decrypts the caller's stored key for the selected provider and builds
+        // the RLM around the chosen model.
+        { provider, model },
       );
 
       setMessages((prev) =>
@@ -274,7 +285,7 @@ export function ChatView() {
       // but a database hiccup must never disturb the chat itself.
       void persistConversation(repo, content, result);
     },
-    [repo, responding, activeProvider],
+    [repo, responding, provider, model],
   );
 
   // Retry a past question from its message bubble — identical to typing the
@@ -286,6 +297,14 @@ export function ChatView() {
     },
     [send],
   );
+
+  // Provider/model dropdown change: apply locally, and persist the provider as
+  // this tab's active provider so /keys stays in sync.
+  function handleSelectionChange(selection: ProviderModelSelection) {
+    setProvider(selection.provider);
+    setModel(selection.model);
+    setActiveProvider({ provider: selection.provider });
+  }
 
   function handleChangeRepo() {
     clearSelectedRepo();
@@ -341,8 +360,8 @@ export function ChatView() {
                 <div className="mb-5 flex items-center justify-between gap-3 rounded-xl border border-border-base bg-surface-subtle px-4 py-3">
                   <p className="flex items-center gap-2 text-[12.5px] leading-relaxed text-muted">
                     <KeyIcon className="h-4 w-4 shrink-0" />
-                    Someone answers with the free default model. Bring your own
-                    provider key to talk to your own model.
+                    Questions are answered with a provider key you save on /keys.
+                    Add yours to pick the model in the composer below.
                   </p>
                   <Link
                     href="/keys"
@@ -402,6 +421,13 @@ export function ChatView() {
               }}
               className="mx-auto w-full max-w-[820px] px-5 py-4"
             >
+              <div className="mb-2 flex flex-wrap items-center gap-2 px-1">
+                <ProviderModelSelector
+                  value={{ provider, model }}
+                  onChange={handleSelectionChange}
+                  disabled={responding || !repo}
+                />
+              </div>
               <div className="flex items-end gap-2.5 rounded-2xl border border-border-base bg-surface p-2 shadow-[0_1px_2px_rgba(0,0,0,0.04)] focus-within:border-accent focus-within:ring-4 focus-within:ring-accent/12">
                 <textarea
                   ref={textareaRef}
@@ -522,6 +548,11 @@ const MessageBubble = memo(function MessageBubble({
           <p className="mt-3 rounded-lg border border-border-base bg-surface-subtle px-3 py-2 text-[12.5px] leading-relaxed text-muted">
             {message.content ? "Note: " : ""}
             {message.error}
+            {message.error.includes("No API key saved") ? (
+              <Link href="/keys" className="ml-1 font-medium text-accent hover:underline">
+                Add a key
+              </Link>
+            ) : null}
           </p>
         ) : null}
 

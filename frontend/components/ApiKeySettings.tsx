@@ -18,6 +18,7 @@ import {
   setActiveProvider,
   type ProviderId,
 } from "@/lib/api-key-store";
+import { KEY_PATTERNS, validateApiKey } from "@/lib/validateApiKey";
 import { useActiveProvider } from "@/hooks/use-active-provider";
 import {
   deleteApiKey,
@@ -50,6 +51,8 @@ export function ApiKeySettings() {
   const [saving, setSaving] = useState(false);
 
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+
+  const { valid: keyFormatValid, error: formatError } = validateApiKey(provider, keyValue);
 
   const refresh = useCallback(() => {
     listSavedApiKeys().then((result) => {
@@ -261,12 +264,26 @@ export function ApiKeySettings() {
                 autoComplete="off"
                 value={keyValue}
                 onChange={(e) => setKeyValue(e.target.value)}
-                placeholder={provider === "openrouter" ? "sk-or-…" : "Enter your provider key"}
+                placeholder={KEY_PATTERNS[provider].example}
+                aria-invalid={keyValue.trim() !== "" && formatError !== null}
               />
+              {keyValue.trim() && formatError ? (
+                <p className="mt-1.5 text-[12px] leading-relaxed text-red-600 dark:text-red-400">
+                  {formatError}
+                </p>
+              ) : null}
+              <p className="mt-1.5 text-[11.5px] leading-relaxed text-muted">
+                Sent once, over HTTPS, and checked with the provider itself
+                before it is saved.
+              </p>
             </div>
 
             <div className="flex items-center justify-end gap-2.5">
-              <Button type="submit" size="md" disabled={!keyValue.trim() || saving}>
+              <Button
+                type="submit"
+                size="md"
+                disabled={!keyFormatValid || saving}
+              >
                 {saving ? <SpinnerIcon className="h-4 w-4" /> : "Save key"}
               </Button>
             </div>

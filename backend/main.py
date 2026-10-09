@@ -516,6 +516,21 @@ API_KEYS_TABLE = "user_api_keys"
 # The same whitelist as the `user_api_keys.provider` CHECK constraint.
 ALLOWED_PROVIDERS = ("openrouter", "openai", "anthropic")
 
+# Provider key prefixes for save-time validation. Cheap garbage gate only —
+# length rules live in the frontend; the provider's own endpoint (see
+# _verify_provider_key) is the authoritative validator.
+PROVIDER_KEY_PREFIXES: dict[str, tuple[str, ...]] = {
+    "openrouter": ("sk-or-v1-",),
+    "openai": ("sk-", "sk-proj-"),
+    "anthropic": ("sk-ant-",),
+}
+
+PROVIDER_LABELS: dict[str, str] = {
+    "openrouter": "OpenRouter",
+    "openai": "OpenAI",
+    "anthropic": "Anthropic",
+}
+
 
 def _db():
     """Supabase client for Postgres (repos table) — same creds as storage."""
@@ -529,7 +544,8 @@ def _db():
 
 
 # ---------------------------------------------------------------------------
-# `user_api_keys` table (BYOK blobs — the server never sees the plaintext key)
+# `user_api_keys` table (BYOK blobs — the plaintext key arrives over HTTPS,
+# is validated and encrypted here, and only the blob + hint is persisted)
 # ---------------------------------------------------------------------------
 
 def _require_provider(provider: str) -> str:
@@ -540,6 +556,61 @@ def _require_provider(provider: str) -> str:
             detail=f"Unsupported API provider: {provider!r}. Allowed: {', '.join(ALLOWED_PROVIDERS)}.",
         )
     return provider
+
+
+def _check_api_key_format(provider: str, api_key: str) -> str | None:
+    """Prefix sanity check (step 1 of the BYOK save gate)."""
+    prefixes = PROVIDER_KEY_PREFIXES[provider]
+    label = PROVIDER_LABELS[provider]
+    if not any(api_key.startswith(p) for p in prefixes):
+        return (
+            f"That doesn't look like a {label} key — {label} keys start with "
+            f"{', '.join(repr(p) for p in prefixes)}."
+        )
+    return None
+
+
+def _verify_provider_key(provider: str, api_key: str, timeout: float = 8.0) -> str | None:
+    """Ask the provider itself whether this key authenticates (step 2 of the
+    BYOK save gate).
+
+    Each provider exposes a free, read-only "who am I" endpoint that answers
+    401/403 in milliseconds for a bad or over-scoped key. Returns None on
+    success, otherwise a user-facing error string. Nothing is saved when this
+    returns an error.
+    """
+    if provider == "openrouter":
+        url = "https://openrouter.ai/api/v1/key"
+        headers = {"Authorization": f"Bearer {api_key}"}
+    elif provider == "openai":
+        url = "https://api.openai.com/v1/models"
+        headers = {"Authorization": f"Bearer {api_key}"}
+    elif provider == "anthropic":
+        url = "https://api.anthropic.com/v1/models"
+        headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
+    else:
+        return f"Unsupported provider {provider!r}."
+
+    label = PROVIDER_LABELS.get(provider, provider)
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            response = client.get(url, headers=headers)
+        status = response.status_code
+    except httpx.HTTPError as e:
+        return (
+            f"Could not reach {label} to verify this key ({type(e).__name__}). "
+            "Try again — nothing was saved."
+        )
+
+    if status in (401, 403):
+        kind = "an authentication" if status == 401 else "a permission"
+        return (
+            f"{label} rejected this key (HTTP {status}): that's {kind} error — "
+            "the key is invalid, expired, or lacks model access."
+        )
+    if status != 200:
+        return f"{label} didn't accept this key (HTTP {status}). Nothing was saved."
+    return None
 
 
 def _list_user_api_keys(user_id: str) -> list[dict]:
@@ -1261,9 +1332,11 @@ def save_key(payload: SaveApiKeyRequest, authorization: str = Header(default="")
     """Save (or replace) a provider's API key, encrypted at rest.
 
     Phase 1 of BYOK: the plaintext key travels from the browser over HTTPS; the
-    server derives a per-user key (PBKDF2 over `user_id + MASTER_SECRET`, never
-    stored), encrypts the key with AES-256-GCM, and stores only the blob + a
-    last-4 hint in `user_api_keys`. The plaintext never reaches disk or logs.
+    server validates it (format, then a minimal authenticated call to the
+    provider), derives a per-user key (PBKDF2 over `user_id + MASTER_SECRET`,
+    never stored), encrypts the key with AES-256-GCM, and stores only the blob
+    + a last-4 hint in `user_api_keys`. The plaintext never reaches disk or
+    logs, and nothing is saved unless the provider accepts the key.
     """
     user_id = verify_bearer_token(authorization) or ""
     _require_provider(payload.provider)
@@ -1271,6 +1344,16 @@ def save_key(payload: SaveApiKeyRequest, authorization: str = Header(default="")
     api_key = payload.api_key.strip()
     if not api_key:
         raise HTTPException(status_code=422, detail="API key must not be empty")
+
+    # Save gate: format first (fast), then let the provider authenticate it.
+    # A validation failure (format, 401/403, unreachable) aborts the store.
+    format_error = _check_api_key_format(payload.provider, api_key)
+    if format_error:
+        raise HTTPException(status_code=422, detail=format_error)
+
+    verify_error = _verify_provider_key(payload.provider, api_key)
+    if verify_error:
+        raise HTTPException(status_code=422, detail=verify_error)
 
     try:
         encrypted_blob = key_vault.encrypt_api_key(api_key, user_id)

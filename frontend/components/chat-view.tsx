@@ -9,7 +9,7 @@ import { RepoSidebar } from "@/components/repo-sidebar";
 import { CopyIcon, CheckIcon, SpinnerIcon, FileIcon, ReloadIcon, KeyIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { useSelectedRepo } from "@/hooks/use-selected-repo";
-import { useActiveApiKey } from "@/hooks/use-active-api-key";
+import { useActiveProvider } from "@/hooks/use-active-provider";
 import { clearSelectedRepo, writeSelectedRepo, type SelectedRepo } from "@/lib/repo";
 import { askQuestion } from "@/app/lib/actions/askQuestion";
 import { getUserRepos } from "@/app/lib/actions/getUserRepos";
@@ -87,7 +87,7 @@ export function ChatView() {
   const router = useRouter();
   const pathname = usePathname();
   const repo = useSelectedRepo();
-  const activeKey = useActiveApiKey();
+  const activeProvider = useActiveProvider();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [responding, setResponding] = useState(false);
@@ -244,11 +244,10 @@ export function ChatView() {
       const result = await askQuestion(
         content,
         repo.slug,
-        // A key unlocked in this tab supplies the provider + per-request key.
-        // Without one the backend answers using the free default model.
-        activeKey
-          ? { provider: activeKey.provider, apiKey: activeKey.apiKey }
-          : undefined,
+        // A provider chosen in this tab supplies the BYOK provider id; the
+        // backend decrypts the caller's stored key server-side for the request.
+        // Without one it answers using the free default model.
+        activeProvider ? { provider: activeProvider.provider } : undefined,
       );
 
       setMessages((prev) =>
@@ -275,7 +274,7 @@ export function ChatView() {
       // but a database hiccup must never disturb the chat itself.
       void persistConversation(repo, content, result);
     },
-    [repo, responding, activeKey],
+    [repo, responding, activeProvider],
   );
 
   // Retry a past question from its message bubble — identical to typing the
@@ -338,7 +337,7 @@ export function ChatView() {
                 </div>
               )}
 
-              {repo && !activeKey ? (
+              {repo && !activeProvider ? (
                 <div className="mb-5 flex items-center justify-between gap-3 rounded-xl border border-border-base bg-surface-subtle px-4 py-3">
                   <p className="flex items-center gap-2 text-[12.5px] leading-relaxed text-muted">
                     <KeyIcon className="h-4 w-4 shrink-0" />

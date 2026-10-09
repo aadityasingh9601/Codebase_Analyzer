@@ -14,15 +14,13 @@ import { Notice } from "@/components/ui/notice";
 import {
   PROVIDER_LABELS,
   PROVIDERS,
-  clearActiveApiKey,
-  setActiveApiKey,
+  clearActiveProvider,
+  setActiveProvider,
   type ProviderId,
 } from "@/lib/api-key-store";
-import { useActiveApiKey } from "@/hooks/use-active-api-key";
-import { apiKeyHint, decryptApiKey, encryptApiKey } from "@/lib/crypto";
+import { useActiveProvider } from "@/hooks/use-active-provider";
 import {
   deleteApiKey,
-  getApiKeyBlob,
   listSavedApiKeys,
   saveApiKey,
   type SavedApiKey,
@@ -31,28 +29,24 @@ import {
 /**
  * Manage "bring your own" AI provider keys.
  *
- * The plaintext key is encrypted in this browser with a password-derived
- * AES-GCM key before anything is sent to the backend; the server only ever
- * stores the blob (plus a last-4 hint) in `user_api_keys`. To use a saved key
- * for a chat session the user re-enters the same password, which re-derives
- * the AES key locally and decrypts the blob — the plaintext then lives only in
- * this tab's sessionStorage and is sent per request.
+ * The plaintext key travels from this browser to the backend once, over HTTPS.
+ * The server derives a per-user encryption key (PBKDF2 over `user_id +
+ * MASTER_SECRET`, computed fresh and never stored), encrypts the key with
+ * AES-256-GCM, and stores only the blob + a last-4 hint. The plaintext never
+ * lives in this browser afterwards: this tab only remembers which saved
+ * provider to ask with, and /chat sends just that id — the backend decrypts
+ * the key server-side for each request.
  */
 export function ApiKeySettings() {
-  const activeKey = useActiveApiKey();
+  const activeProvider = useActiveProvider();
 
   const [saved, setSaved] = useState<SavedApiKey[]>([]);
   const [loadingKeys, setLoadingKeys] = useState(true);
   const [loadError, setLoadError] = useState("");
 
-  // Two independent passwords: one unlocks saved keys, one encrypts new keys.
-  const [unlockPassword, setUnlockPassword] = useState("");
-  const [unlockingProvider, setUnlockingProvider] = useState<ProviderId | null>(null);
-
   // Add/replace form.
   const [provider, setProvider] = useState<ProviderId>("openrouter");
   const [keyValue, setKeyValue] = useState("");
-  const [savePassword, setSavePassword] = useState("");
   const [saving, setSaving] = useState(false);
 
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
@@ -76,23 +70,24 @@ export function ApiKeySettings() {
 
   async function handleAddKey(e: React.FormEvent) {
     e.preventDefault();
-    if (!keyValue.trim() || !savePassword || saving) return;
+    if (!keyValue.trim() || saving) return;
 
     setSaving(true);
     setNotice(null);
     try {
-      const blob = await encryptApiKey(keyValue.trim(), savePassword);
-      const hint = apiKeyHint(keyValue);
-      const result = await saveApiKey(provider, blob, hint);
+      const result = await saveApiKey(provider, keyValue.trim());
 
       if (!result.ok) {
         setNotice({ tone: "error", text: result.error });
         return;
       }
 
+      // Auto-activate the just-saved provider so it is immediately usable in
+      // /chat without another click.
+      setActiveProvider({ provider, keyHint: result.key.keyHint });
       setNotice({
         tone: "success",
-        text: `Saved ${PROVIDER_LABELS[provider]} key (${result.key.keyHint}). Enter your password and press Unlock to use it this session.`,
+        text: `Saved ${PROVIDER_LABELS[provider]} key (${result.key.keyHint}). It is now the active key for this tab's chat.`,
       });
       refresh();
     } catch (err) {
@@ -101,43 +96,10 @@ export function ApiKeySettings() {
         text: err instanceof Error ? err.message : "Could not save your key. Try again.",
       });
     } finally {
-      // Clear the key AND password after the attempt, success or failure: the
-      // secret must not linger in the field.
+      // Clear the key after the attempt, success or failure: the secret must
+      // not linger in the field.
       setKeyValue("");
-      setSavePassword("");
       setSaving(false);
-    }
-  }
-
-  async function handleUnlock(row: SavedApiKey) {
-    if (!unlockPassword || unlockingProvider) return;
-
-    setUnlockingProvider(row.provider);
-    setNotice(null);
-    try {
-      const blobResult = await getApiKeyBlob(row.provider);
-
-      if (!blobResult.ok) {
-        setNotice({ tone: "error", text: blobResult.error });
-        return;
-      }
-
-      const apiKey = await decryptApiKey(blobResult.encryptedBlob, unlockPassword);
-      setActiveApiKey({ provider: row.provider, apiKey, keyHint: blobResult.keyHint || row.keyHint });
-      setNotice({
-        tone: "success",
-        text: `${PROVIDER_LABELS[row.provider]} key unlocked for this session. Ask away in /chat.`,
-      });
-    } catch {
-      setNotice({
-        tone: "error",
-        text: `Unlock failed — wrong password or corrupted data for ${PROVIDER_LABELS[row.provider]}.`,
-      });
-    } finally {
-      // Clear on success AND failure: the password is a secret and must not
-      // stay in the input after an attempt.
-      setUnlockPassword("");
-      setUnlockingProvider(null);
     }
   }
 
@@ -150,7 +112,7 @@ export function ApiKeySettings() {
       return;
     }
 
-    if (activeKey?.provider === row.provider) clearActiveApiKey();
+    if (activeProvider?.provider === row.provider) clearActiveProvider();
     setNotice({
       tone: "success",
       text: `Removed the stored ${PROVIDER_LABELS[row.provider]} key.`,
@@ -158,8 +120,8 @@ export function ApiKeySettings() {
     refresh();
   }
 
-  function handleLock() {
-    clearActiveApiKey();
+  function handleStopUsing() {
+    clearActiveProvider();
     setNotice({ tone: "success", text: "Your key is no longer active in this tab." });
   }
 
@@ -173,30 +135,29 @@ export function ApiKeySettings() {
           API keys
         </h1>
         <p className="mt-2 text-[13px] leading-relaxed text-muted">
-          Your provider key is encrypted in this browser with a password you
-          choose — the server only ever stores the encrypted blob and never
-          sees the key itself. Forgetting the password means re-entering the
-          key; there is no server-side reset.
+          Your provider key is sent to the server once, over HTTPS, and the keys
+          are encrypted at rest with a key derived from your account and the
+          server&apos;s secret — the raw key is never stored. This tab just
+          remembers which saved provider to ask with.
         </p>
       </div>
 
       <div className="space-y-6">
         {notice ? <Notice tone={notice.tone}>{notice.text}</Notice> : null}
 
-        {activeKey ? (
+        {activeProvider ? (
           <section className="rounded-2xl border border-emerald-500/25 bg-emerald-500/[0.07] p-5">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-[13px] font-medium text-emerald-700 dark:text-emerald-300">
-                  Unlocked for this session
+                  Active key for this tab
                 </p>
                 <p className="mt-1 text-[12.5px] text-muted">
-                  {PROVIDER_LABELS[activeKey.provider]} · {activeKey.keyHint} — sent
-                  per request over HTTPS and used once.
+                  {PROVIDER_LABELS[activeProvider.provider]} · {activeProvider.keyHint}
                 </p>
               </div>
-              <Button type="button" size="sm" variant="secondary" onClick={handleLock}>
-                Lock
+              <Button type="button" size="sm" variant="secondary" onClick={handleStopUsing}>
+                Stop using
               </Button>
             </div>
           </section>
@@ -214,8 +175,8 @@ export function ApiKeySettings() {
             <Notice tone="error">{loadError}</Notice>
           ) : saved.length === 0 ? (
             <p className="text-[13px] text-muted">
-              No keys saved yet. Add one below — it is encrypted before it
-              reaches the server.
+              No keys saved yet. Add one below — it will be encrypted on the
+              server before it reaches the key store.
             </p>
           ) : (
             <ul className="space-y-2.5">
@@ -236,14 +197,12 @@ export function ApiKeySettings() {
                       type="button"
                       size="sm"
                       variant="secondary"
-                      disabled={!unlockPassword || unlockingProvider !== null}
-                      onClick={() => handleUnlock(row)}
+                      disabled={activeProvider?.provider === row.provider}
+                      onClick={() =>
+                        setActiveProvider({ provider: row.provider, keyHint: row.keyHint })
+                      }
                     >
-                      {unlockingProvider === row.provider ? (
-                        <SpinnerIcon className="h-3.5 w-3.5" />
-                      ) : (
-                        "Unlock"
-                      )}
+                      {activeProvider?.provider === row.provider ? "Using now" : "Use"}
                     </Button>
                     <Button
                       type="button"
@@ -260,27 +219,6 @@ export function ApiKeySettings() {
               ))}
             </ul>
           )}
-
-          <div className="mt-4">
-            <label
-              htmlFor="unlock-password"
-              className="mb-1.5 block text-[12.5px] font-medium text-foreground"
-            >
-              Encryption password
-            </label>
-            <Input
-              id="unlock-password"
-              type="password"
-              autoComplete="new-password"
-              value={unlockPassword}
-              onChange={(e) => setUnlockPassword(e.target.value)}
-              placeholder="The password this key was saved with"
-            />
-            <p className="mt-1.5 text-[11.5px] leading-relaxed text-muted">
-              Unlocks a saved key for this session. It never leaves your
-              browser.
-            </p>
-          </div>
         </section>
 
         <section className="rounded-2xl border border-border-base bg-surface p-5">
@@ -327,29 +265,8 @@ export function ApiKeySettings() {
               />
             </div>
 
-            <div>
-              <label
-                htmlFor="key-encrypt-password"
-                className="mb-1.5 block text-[12.5px] font-medium text-foreground"
-              >
-                Encryption password
-              </label>
-              <Input
-                id="key-encrypt-password"
-                type="password"
-                autoComplete="new-password"
-                value={savePassword}
-                onChange={(e) => setSavePassword(e.target.value)}
-                placeholder="Choose a password you will remember"
-              />
-            </div>
-
             <div className="flex items-center justify-end gap-2.5">
-              <Button
-                type="submit"
-                size="md"
-                disabled={!keyValue.trim() || !savePassword || saving}
-              >
+              <Button type="submit" size="md" disabled={!keyValue.trim() || saving}>
                 {saving ? <SpinnerIcon className="h-4 w-4" /> : "Save key"}
               </Button>
             </div>
@@ -368,8 +285,8 @@ export function ApiKeySettings() {
         </section>
 
         <p className="text-center text-[12px] leading-relaxed text-muted">
-          Provider keys are yours. We store the encrypted blob, serve it back to
-          you, and never attempt to decrypt it.
+          Provider keys are yours. We store them encrypted and only ever use the
+          key you choose during the current chat session.
         </p>
       </div>
     </div>

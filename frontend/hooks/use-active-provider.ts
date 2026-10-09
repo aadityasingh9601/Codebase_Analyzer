@@ -2,17 +2,17 @@
 
 import { useSyncExternalStore } from "react";
 import {
-  API_KEY_CHANGE_EVENT,
-  readActiveApiKeyRaw,
-  type ActiveApiKey,
+  PROVIDER_CHANGE_EVENT,
+  readActiveProviderRaw,
+  type ActiveProvider,
 } from "@/lib/api-key-store";
 
 /** Same caching trick as use-selected-repo, for the sessionStorage store. */
 let cachedRaw: string | null = null;
-let cachedKey: ActiveApiKey | null = null;
+let cachedKey: ActiveProvider | null = null;
 
-function getSnapshot(): ActiveApiKey | null {
-  const raw = readActiveApiKeyRaw();
+function getSnapshot(): ActiveProvider | null {
+  const raw = readActiveProviderRaw();
 
   if (raw === cachedRaw) {
     return cachedKey;
@@ -20,7 +20,7 @@ function getSnapshot(): ActiveApiKey | null {
 
   cachedRaw = raw;
   try {
-    cachedKey = raw ? (JSON.parse(raw) as ActiveApiKey) : null;
+    cachedKey = raw ? (JSON.parse(raw) as ActiveProvider) : null;
   } catch {
     cachedKey = null;
   }
@@ -28,16 +28,16 @@ function getSnapshot(): ActiveApiKey | null {
 }
 
 function subscribe(callback: () => void) {
-  window.addEventListener(API_KEY_CHANGE_EVENT, callback);
+  window.addEventListener(PROVIDER_CHANGE_EVENT, callback);
   return () => {
-    window.removeEventListener(API_KEY_CHANGE_EVENT, callback);
+    window.removeEventListener(PROVIDER_CHANGE_EVENT, callback);
   };
 }
 
-function getServerSnapshot(): ActiveApiKey | null {
+function getServerSnapshot(): ActiveProvider | null {
   return null;
 }
 
-export function useActiveApiKey(): ActiveApiKey | null {
+export function useActiveProvider(): ActiveProvider | null {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }

@@ -7,8 +7,7 @@ main.py — HTTP API for RepoChat.
     GET  /api/messages    a repository conversation's saved messages
     POST /api/messages    persist one user or assistant message
     GET  /api/keys        list the caller's stored BYOK key "hints"
-    GET  /api/keys/{provider}   a stored key's encrypted blob (for local unlock)
-    PUT  /api/keys        upsert a key's encrypted blob + hint
+    PUT  /api/keys        save (or replace) a provider API key, encrypted at rest
     DELETE /api/keys/{provider} remove a stored key
     GET  /api/health      liveness probe
 
@@ -45,14 +44,15 @@ supabase_messages_table.sql). Every read and write first resolves that repo by
 `user_id` + `id` — the same ownership rule as everything else — so messages
 are as private as the repos they belong to.
 
-`/api/keys*` are the BYOK ("bring your own key") endpoints. The browser
-encrypts the user's provider API key with a password-derived AES-GCM key and
-sends only the encrypted blob (plus a last-4 hint); the server stores it in the
-`user_api_keys` table (see supabase_user_api_keys.sql) and serves it back on
-request so the browser can decrypt it locally. The plaintext key never touches
-these endpoints — the blob is opaque. `POST /api/userquery` additionally
-accepts an optional `provider` + `api_key` for that single request; it is used
-once for the answer and discarded, never stored or logged.
+`/api/keys*` are the BYOK ("bring your own key") endpoints. The browser POSTs
+the caller's provider API key in plaintext (over HTTPS); the server derives a
+per-user encryption key (PBKDF2 over `user_id` + `MASTER_SECRET`, computed fresh
+and never stored), encrypts the key with AES-256-GCM, and stores ONLY the
+encrypted blob plus a last-4 hint in the `user_api_keys` table (see
+supabase_user_api_keys.sql). Every `/api/userquery` request re-derives that
+key, decrypts the caller's stored blob for the requested provider in memory,
+uses it for that one answer, and discards everything. The plaintext key never
+touches disk or logs, and the derived key is never persisted.
 
 Auth: callers send the Supabase access token as `Authorization: Bearer <jwt>`,
 the same token the browser holds. It is verified against the project's JWKS, so
@@ -115,6 +115,7 @@ from repo_storage import (  # noqa: E402
     storage_path_light_json,
 )
 import query_router  # noqa: E402
+import key_vault  # noqa: E402
 
 log = logging.getLogger("repochat")
 
@@ -277,34 +278,32 @@ class UserQueryRequest(BaseModel):
     )
     provider: Literal["openrouter", "openai", "anthropic"] | None = Field(
         None,
-        description="BYOK provider for this request. Defaults to openrouter.",
-    )
-    api_key: str | None = Field(
-        None,
-        min_length=1,
-        max_length=8192,
         description=(
-            "The caller's provider key for this one request. Used once and "
-            "discarded; never stored at rest anywhere. Omit to use the server's "
-            "default model credential."
+            "BYOK provider whose stored key should answer this request. The "
+            "server decrypts the caller's key for this provider. Omit to use "
+            "the server's default model credential."
         ),
     )
 
 
 class SaveApiKeyRequest(BaseModel):
     provider: Literal["openrouter", "openai", "anthropic"] = Field(...)
-    encrypted_blob: str = Field(
+    api_key: str = Field(
         ...,
-        min_length=20,
+        min_length=1,
         max_length=8192,
-        description="The key encrypted client-side (salt||iv||cipher, base64). Opaque to the server.",
+        description=(
+            "The caller's provider API key, in plaintext. Sent over HTTPS, "
+            "encrypted at rest on this server, and never stored or logged in "
+            "plaintext."
+        ),
     )
-    key_hint: str = Field(
-        ...,
-        min_length=4,
-        max_length=16,
-        description="A non-secret identifier for the list UI, e.g. the last 4 chars.",
-    )
+
+
+class SaveApiKeyResponse(BaseModel):
+    message: str = Field("saved", description="Always 'saved' on success.")
+    provider: str = Field(..., description="Provider id, e.g. 'openrouter'.")
+    key_hint: str = Field(..., description="The stored last-4 hint for this provider's key.")
 
 
 class ApiKeyInfo(BaseModel):
@@ -583,6 +582,36 @@ def _upsert_api_key(user_id: str, provider: str, encrypted_blob: str, key_hint: 
 
 def _delete_api_key(user_id: str, provider: str) -> None:
     _db().table(API_KEYS_TABLE).delete().eq("user_id", user_id).eq("provider", provider).execute()
+
+
+def _decrypt_user_provider_key(user_id: str, provider: str) -> str:
+    """Decrypt the caller's stored key for `provider` in memory.
+
+    Phase 2 of BYOK: the per-user key is re-derived fresh from
+    `user_id + MASTER_SECRET` on this request, the stored blob is decrypted,
+    and result lives only in this call's scope. Returns the plaintext API key.
+    """
+    row = _get_user_api_key(user_id, provider)
+    if row is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"No API key saved for provider {provider!r}. "
+                "Add one on /keys first."
+            ),
+        )
+    try:
+        return key_vault.decrypt_api_key(row["encrypted_blob"], user_id)
+    except Exception as e:
+        log.warning("Could not decrypt stored key for %s/%s: %s", user_id, provider, e)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"The stored {provider} key could not be decrypted. It was "
+                "probably saved before the server-side encryption change — "
+                "re-save it on /keys."
+            ),
+        ) from e
 
 
 def _list_user_repos(user_id: str) -> list[dict]:
@@ -1227,33 +1256,30 @@ def list_keys(authorization: str = Header(default="")) -> ListApiKeysResponse:
     )
 
 
-@app.get("/api/keys/{provider}")
-def get_key(provider: str, authorization: str = Header(default="")) -> dict:
-    """Serve a caller's encrypted key blob back for local decryption.
+@app.put("/api/keys", response_model=SaveApiKeyResponse)
+def save_key(payload: SaveApiKeyRequest, authorization: str = Header(default="")) -> SaveApiKeyResponse:
+    """Save (or replace) a provider's API key, encrypted at rest.
 
-    The blob is opaque base64 (salt || iv || AES-GCM ciphertext); returning it
-    is safe because only the browser holds the password that can decrypt it.
-    """
-    user_id = verify_bearer_token(authorization) or ""
-    _require_provider(provider)
-    row = _get_user_api_key(user_id, provider)
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"No stored API key for provider {provider!r}.")
-    return {"provider": provider, "encrypted_blob": row["encrypted_blob"], "key_hint": row["key_hint"]}
-
-
-@app.put("/api/keys", response_model=ApiKeyInfo)
-def save_key(payload: SaveApiKeyRequest, authorization: str = Header(default="")) -> ApiKeyInfo:
-    """Store (or replace) a provider's encrypted key blob + hint.
-
-    The server treats the blob as opaque and never logs it. Ownership is the
-    caller's verified Supabase user id, so one user's keys are never exposed to
-    another.
+    Phase 1 of BYOK: the plaintext key travels from the browser over HTTPS; the
+    server derives a per-user key (PBKDF2 over `user_id + MASTER_SECRET`, never
+    stored), encrypts the key with AES-256-GCM, and stores only the blob + a
+    last-4 hint in `user_api_keys`. The plaintext never reaches disk or logs.
     """
     user_id = verify_bearer_token(authorization) or ""
     _require_provider(payload.provider)
-    _upsert_api_key(user_id, payload.provider, payload.encrypted_blob, payload.key_hint)
-    return ApiKeyInfo(provider=payload.provider, key_hint=payload.key_hint)
+
+    api_key = payload.api_key.strip()
+    if not api_key:
+        raise HTTPException(status_code=422, detail="API key must not be empty")
+
+    try:
+        encrypted_blob = key_vault.encrypt_api_key(api_key, user_id)
+        hint = key_vault.key_hint(api_key)
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    _upsert_api_key(user_id, payload.provider, encrypted_blob, hint)
+    return SaveApiKeyResponse(message="saved", provider=payload.provider, key_hint=hint)
 
 
 @app.delete("/api/keys/{provider}", status_code=204)
@@ -1286,12 +1312,15 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
     if not question:
         raise HTTPException(status_code=422, detail="question must not be empty")
 
-    # BYOK credentials for this one request. The key never gets logged or
-    # stored; empty means "use the server's default model credential."
-    provider = _require_provider((payload.provider or "openrouter").strip().lower())
-    api_key = (payload.api_key or "").strip()
-    if not api_key:
-        api_key = ""
+    # BYOK (Phase 2): re-derive the caller's per-user key server-side and
+    # decrypt their stored blob for the requested provider — in memory, for
+    # this request only. No key travels in the request body. Omitting the
+    # provider means "use the server's default model credential."
+    provider = (payload.provider or "openrouter").strip().lower()
+    api_key = ""
+    if payload.provider:
+        _require_provider(provider)
+        api_key = _decrypt_user_provider_key(user_id, provider)
 
     row = _user_repo_target(user_id, payload.repo_name or "")
     repo_name = row["repo_name"]

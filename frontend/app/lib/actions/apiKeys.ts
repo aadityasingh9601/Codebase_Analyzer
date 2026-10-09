@@ -6,10 +6,11 @@ import { PROVIDERS, type ProviderId } from "@/lib/api-key-store";
 /**
  * Server Action: manage the caller's BYOK API keys.
  *
- * Only the *encrypted* blob ever touches the backend: the browser encrypts the
- * key with a password-derived AES-GCM key, uploads that blob plus a last-4 hint,
- * and the server stores it in `user_api_keys` without ever seeing the plaintext.
- * Endpoints are scoped to the caller's Supabase user via the forwarded session.
+ * The key travels in plaintext from the browser (over HTTPS); the backend
+ * derives a per-user encryption key from `user_id + MASTER_SECRET`, stores the
+ * key as an AES-256-GCM blob plus a last-4 hint, and never persists or logs the
+ * plaintext. At query time the browser sends only the provider id; the backend
+ * decrypts the stored blob server-side for that one request.
  */
 
 /** A stored key row (matches `GET /api/keys`). */
@@ -88,13 +89,12 @@ export async function listSavedApiKeys(): Promise<ListApiKeysResult> {
 }
 
 /**
- * Store a key *blob* for `provider`. The blob is already encrypted client-side;
- * this action never receives or forwards a plaintext key.
+ * Store (or replace) the plaintext key for `provider`. The backend encrypts it
+ * at rest; the plaintext travels only over HTTPS and is never persisted.
  */
 export async function saveApiKey(
   provider: ProviderId,
-  encryptedBlob: string,
-  keyHint: string,
+  apiKey: string,
 ): Promise<SaveApiKeyResult> {
   let headers: Record<string, string>;
 
@@ -110,7 +110,7 @@ export async function saveApiKey(
     response = await fetch(`${getBackendUrl()}/api/keys`, {
       method: "PUT",
       headers,
-      body: JSON.stringify({ provider, encrypted_blob: encryptedBlob, key_hint: keyHint }),
+      body: JSON.stringify({ provider, api_key: apiKey }),
       signal: AbortSignal.timeout(30_000),
       cache: "no-store",
     });
@@ -130,11 +130,15 @@ export async function saveApiKey(
     return { ok: false, error: errorFrom(payload, response.status) };
   }
 
+  if (!isHintedKey(payload)) {
+    return { ok: false, error: "The key service returned an unexpected response." };
+  }
+
   return {
     ok: true,
     key: {
       provider,
-      keyHint: isHintedKey(payload) ? payload.key_hint : keyHint,
+      keyHint: payload.key_hint,
     },
   };
 }
@@ -173,53 +177,6 @@ export async function deleteApiKey(provider: ProviderId): Promise<DeleteApiKeyRe
   }
 
   return { ok: true };
-}
-
-/** Fetch the stored blob for a provider so the browser can unlock it locally. */
-export async function getApiKeyBlob(
-  provider: ProviderId,
-): Promise<{ ok: true; encryptedBlob: string; keyHint: string } | { ok: false; error: string }> {
-  let headers: Record<string, string>;
-
-  try {
-    headers = await authHeaders();
-  } catch (e) {
-    return { ok: false, error: authError(e) };
-  }
-
-  let response: Response;
-
-  try {
-    response = await fetch(`${getBackendUrl()}/api/keys/${provider}`, {
-      headers,
-      signal: AbortSignal.timeout(30_000),
-      cache: "no-store",
-    });
-  } catch (e) {
-    return {
-      ok: false,
-      error:
-        e instanceof Error
-          ? `Could not reach the key service at ${getBackendUrl()}. Is it running?`
-          : "Could not fetch your API key.",
-    };
-  }
-
-  const payload = await readJson(response);
-
-  if (!response.ok) {
-    return { ok: false, error: errorFrom(payload, response.status) };
-  }
-
-  if (!isBlobResponse(payload)) {
-    return { ok: false, error: "The key service returned an unexpected response." };
-  }
-
-  return {
-    ok: true,
-    encryptedBlob: payload.encrypted_blob,
-    keyHint: payload.key_hint ?? "",
-  };
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -266,12 +223,6 @@ function isKeysResponse(
     const r = row as Record<string, unknown>;
     return typeof r.provider === "string" && typeof r.key_hint === "string";
   });
-}
-
-function isBlobResponse(value: unknown): value is { encrypted_blob: string; key_hint?: string } {
-  if (typeof value !== "object" || value === null) return false;
-  const r = value as Record<string, unknown>;
-  return typeof r.encrypted_blob === "string";
 }
 
 function isHintedKey(value: unknown): value is { key_hint: string } {

@@ -1,12 +1,14 @@
 /**
- * Active-session API key shared between /keys and /chat.
+ * Active provider shared between /keys and /chat.
  *
- * The plaintext key is only ever kept in this tab's sessionStorage, so it is
- * cleared when the tab (or browser) closes and never survives a session. It is
- * read per request by the chat and sent over HTTPS to the backend, which uses
- * it for that one call and discards it.
+ * The plaintext API key no longer lives in the browser at all — Phase 2 of
+ * BYOK: the frontend only remembers WHICH saved provider should answer the
+ * user's questions, and sends just that `provider` id per request. The backend
+ * re-derives the user's encryption key, decrypts the stored blob, uses it for
+ * that one answer and discards it.
  *
- * Tab-scoped on purpose: the plaintext key must not leak to other tabs.
+ * Kept in sessionStorage so the choice is cleared when the tab closes, and
+ * scoped to this tab on purpose.
  */
 
 export const PROVIDERS = ["openrouter", "openai", "anthropic"] as const;
@@ -18,14 +20,13 @@ export const PROVIDER_LABELS: Record<ProviderId, string> = {
   anthropic: "Anthropic",
 };
 
-const ACTIVE_KEY_STORAGE_KEY = "repochat-active-api-key";
+const ACTIVE_PROVIDER_STORAGE_KEY = "repochat-active-provider";
 
-/** Fired on `window` whenever the active key is set or cleared. */
-export const API_KEY_CHANGE_EVENT = "repochat:api-key-changed";
+/** Fired on `window` whenever the active provider is set or cleared. */
+export const PROVIDER_CHANGE_EVENT = "repochat:provider-changed";
 
-export type ActiveApiKey = {
+export type ActiveProvider = {
   provider: ProviderId;
-  apiKey: string;
   keyHint: string;
 };
 
@@ -34,38 +35,38 @@ export function isProviderId(value: string): value is ProviderId {
 }
 
 /** The raw sessionStorage string, or null. Uncached — callers may memoise. */
-export function readActiveApiKeyRaw(): string | null {
+export function readActiveProviderRaw(): string | null {
   if (typeof window === "undefined") return null;
   try {
-    return sessionStorage.getItem(ACTIVE_KEY_STORAGE_KEY);
+    return sessionStorage.getItem(ACTIVE_PROVIDER_STORAGE_KEY);
   } catch {
     return null;
   }
 }
 
-export function getActiveApiKey(): ActiveApiKey | null {
-  const raw = readActiveApiKeyRaw();
+export function getActiveProvider(): ActiveProvider | null {
+  const raw = readActiveProviderRaw();
   if (!raw) return null;
   try {
-    return JSON.parse(raw) as ActiveApiKey;
+    return JSON.parse(raw) as ActiveProvider;
   } catch {
     return null;
   }
 }
 
-export function setActiveApiKey(key: ActiveApiKey): void {
+export function setActiveProvider(provider: ActiveProvider): void {
   try {
-    sessionStorage.setItem(ACTIVE_KEY_STORAGE_KEY, JSON.stringify(key));
-    window.dispatchEvent(new Event(API_KEY_CHANGE_EVENT));
+    sessionStorage.setItem(ACTIVE_PROVIDER_STORAGE_KEY, JSON.stringify(provider));
+    window.dispatchEvent(new Event(PROVIDER_CHANGE_EVENT));
   } catch {
-    // Non-fatal: chat just behaves as if no key is unlocked.
+    // Non-fatal: chat just behaves as if no provider is selected.
   }
 }
 
-export function clearActiveApiKey(): void {
+export function clearActiveProvider(): void {
   try {
-    sessionStorage.removeItem(ACTIVE_KEY_STORAGE_KEY);
-    window.dispatchEvent(new Event(API_KEY_CHANGE_EVENT));
+    sessionStorage.removeItem(ACTIVE_PROVIDER_STORAGE_KEY);
+    window.dispatchEvent(new Event(PROVIDER_CHANGE_EVENT));
   } catch {
     // Ignore.
   }

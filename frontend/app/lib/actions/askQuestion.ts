@@ -53,13 +53,13 @@ export type AskResult =
  * connected repositories; the backend answers against the commit it indexed.
  */
 /**
- * The caller's BYOK key for this one request, if any. The plaintext travels
- * from this tab's sessionStorage to the backend over HTTPS, is used for that
- * single request, and is never persisted anywhere.
+ * The caller's saved BYOK provider for this request, if any. Only the *id* is
+ * sent — the backend re-derives the caller's encryption key, decrypts their
+ * stored key blob server-side for that one request, and discards it. The
+ * plaintext key never exists in the browser.
  */
 export type RequestCredentials = {
   provider?: string;
-  apiKey?: string;
 };
 
 /**
@@ -103,9 +103,9 @@ export async function askQuestion(
       body: JSON.stringify({
         question,
         repo_name: repoName,
-        // provider defaults server-side to openrouter; the key is used once.
+        // provider defaults server-side to openrouter; the caller's stored key
+        // is decrypted on the server for this request only.
         provider: credentials?.provider,
-        api_key: credentials?.apiKey,
       }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
       // The query can take minutes; do not let Next's fetch fail first.

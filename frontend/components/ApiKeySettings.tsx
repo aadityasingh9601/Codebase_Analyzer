@@ -45,13 +45,14 @@ export function ApiKeySettings() {
   const [loadingKeys, setLoadingKeys] = useState(true);
   const [loadError, setLoadError] = useState("");
 
-  // Single shared encryption password, and a per-row unlock busy state.
-  const [password, setPassword] = useState("");
+  // Two independent passwords: one unlocks saved keys, one encrypts new keys.
+  const [unlockPassword, setUnlockPassword] = useState("");
   const [unlockingProvider, setUnlockingProvider] = useState<ProviderId | null>(null);
 
   // Add/replace form.
   const [provider, setProvider] = useState<ProviderId>("openrouter");
   const [keyValue, setKeyValue] = useState("");
+  const [savePassword, setSavePassword] = useState("");
   const [saving, setSaving] = useState(false);
 
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
@@ -75,12 +76,12 @@ export function ApiKeySettings() {
 
   async function handleAddKey(e: React.FormEvent) {
     e.preventDefault();
-    if (!keyValue.trim() || !password || saving) return;
+    if (!keyValue.trim() || !savePassword || saving) return;
 
     setSaving(true);
     setNotice(null);
     try {
-      const blob = await encryptApiKey(keyValue.trim(), password);
+      const blob = await encryptApiKey(keyValue.trim(), savePassword);
       const hint = apiKeyHint(keyValue);
       const result = await saveApiKey(provider, blob, hint);
 
@@ -89,7 +90,6 @@ export function ApiKeySettings() {
         return;
       }
 
-      setKeyValue("");
       setNotice({
         tone: "success",
         text: `Saved ${PROVIDER_LABELS[provider]} key (${result.key.keyHint}). Enter your password and press Unlock to use it this session.`,
@@ -101,12 +101,16 @@ export function ApiKeySettings() {
         text: err instanceof Error ? err.message : "Could not save your key. Try again.",
       });
     } finally {
+      // Clear the key AND password after the attempt, success or failure: the
+      // secret must not linger in the field.
+      setKeyValue("");
+      setSavePassword("");
       setSaving(false);
     }
   }
 
   async function handleUnlock(row: SavedApiKey) {
-    if (!password || unlockingProvider) return;
+    if (!unlockPassword || unlockingProvider) return;
 
     setUnlockingProvider(row.provider);
     setNotice(null);
@@ -118,9 +122,8 @@ export function ApiKeySettings() {
         return;
       }
 
-      const apiKey = await decryptApiKey(blobResult.encryptedBlob, password);
+      const apiKey = await decryptApiKey(blobResult.encryptedBlob, unlockPassword);
       setActiveApiKey({ provider: row.provider, apiKey, keyHint: blobResult.keyHint || row.keyHint });
-      setPassword("");
       setNotice({
         tone: "success",
         text: `${PROVIDER_LABELS[row.provider]} key unlocked for this session. Ask away in /chat.`,
@@ -131,6 +134,9 @@ export function ApiKeySettings() {
         text: `Unlock failed — wrong password or corrupted data for ${PROVIDER_LABELS[row.provider]}.`,
       });
     } finally {
+      // Clear on success AND failure: the password is a secret and must not
+      // stay in the input after an attempt.
+      setUnlockPassword("");
       setUnlockingProvider(null);
     }
   }
@@ -230,7 +236,7 @@ export function ApiKeySettings() {
                       type="button"
                       size="sm"
                       variant="secondary"
-                      disabled={!password || unlockingProvider !== null}
+                      disabled={!unlockPassword || unlockingProvider !== null}
                       onClick={() => handleUnlock(row)}
                     >
                       {unlockingProvider === row.provider ? (
@@ -266,13 +272,13 @@ export function ApiKeySettings() {
               id="unlock-password"
               type="password"
               autoComplete="new-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              value={unlockPassword}
+              onChange={(e) => setUnlockPassword(e.target.value)}
               placeholder="The password this key was saved with"
             />
             <p className="mt-1.5 text-[11.5px] leading-relaxed text-muted">
-              Used to unlock a saved key for this session (and to encrypt a new
-              one below). It never leaves your browser.
+              Unlocks a saved key for this session. It never leaves your
+              browser.
             </p>
           </div>
         </section>
@@ -332,8 +338,8 @@ export function ApiKeySettings() {
                 id="key-encrypt-password"
                 type="password"
                 autoComplete="new-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                value={savePassword}
+                onChange={(e) => setSavePassword(e.target.value)}
                 placeholder="Choose a password you will remember"
               />
             </div>
@@ -342,7 +348,7 @@ export function ApiKeySettings() {
               <Button
                 type="submit"
                 size="md"
-                disabled={!keyValue.trim() || !password || saving}
+                disabled={!keyValue.trim() || !savePassword || saving}
               >
                 {saving ? <SpinnerIcon className="h-4 w-4" /> : "Save key"}
               </Button>

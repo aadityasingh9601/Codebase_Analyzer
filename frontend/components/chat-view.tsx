@@ -2,11 +2,11 @@
 
 import { memo, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { RepoSidebar } from "@/components/repo-sidebar";
-import { CopyIcon, CheckIcon, SendIcon, SpinnerIcon, FileIcon, ReloadIcon, KeyIcon } from "@/components/icons";
+import { CopyIcon, CheckIcon, SpinnerIcon, FileIcon, ReloadIcon, KeyIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { useSelectedRepo } from "@/hooks/use-selected-repo";
 import { useActiveApiKey } from "@/hooks/use-active-api-key";
@@ -38,52 +38,6 @@ export type Message = {
   /** Set when the backend could not produce an answer. */
   error?: string;
 };
-
-/**
- * Preview transcript, shown only when nothing is connected. It exists so the
- * interface can be judged on its own; once a repository is actually indexed it
- * is replaced, because attributing these answers — and their source paths — to
- * someone else's code would be a lie.
- */
-const DEMO_MESSAGES: Message[] = [
-  {
-    id: "demo-u1",
-    role: "user",
-    content: "How does booking availability get calculated for a team event?",
-  },
-  {
-    id: "demo-a1",
-    role: "assistant",
-    content:
-      "Availability is computed on the server and returned to the client as a pre-built map of time slots.\n\nThe request path is: the calendar view calls the slots endpoint with the event id and a date range, which delegates to the availability service. That service pulls existing bookings, applies the event's time range, minimum notice, and buffer between meetings, then walks each day in 15-minute increments marking slots as available or taken.\n\nThe interesting part is that buffers are applied per-booking rather than globally, so a 30-minute buffer after one meeting does not eat the gap before the next one.",
-    sources: [
-      "packages/features/bookings/lib/getAvailability.ts",
-      "apps/web/app/api/slots/route.ts",
-      "packages/features/bookings/lib/bookingBuffers.ts",
-    ],
-  },
-];
-
-/** Opening message for a real, indexed repository. */
-function greeting(repo: NonNullable<SelectedRepo>): Message {
-  const facts = [
-    repo.fileCount !== undefined ? `${repo.fileCount.toLocaleString()} files` : null,
-    repo.totalLines !== undefined ? `${repo.totalLines.toLocaleString()} lines` : null,
-    repo.branch && repo.sha ? `${repo.branch} @ ${repo.sha.slice(0, 7)}` : null,
-  ].filter(Boolean);
-
-  return {
-    id: "greeting",
-    role: "assistant",
-    content: `Connected to ${repo.slug}${facts.length ? ` (${facts.join(", ")})` : ""}.${
-      repo.description ? `\n\n${repo.description}` : ""
-    }\n\nAsk me anything about the code and I will answer from the index.`,
-  };
-}
-
-function initialMessages(repo: SelectedRepo | null): Message[] {
-  return repo ? [greeting(repo)] : DEMO_MESSAGES;
-}
 
 /**
  * Monotonic message ids. Lives at module scope so generating one is not an
@@ -131,9 +85,10 @@ async function persistConversation(
 
 export function ChatView() {
   const router = useRouter();
+  const pathname = usePathname();
   const repo = useSelectedRepo();
   const activeKey = useActiveApiKey();
-  const [messages, setMessages] = useState<Message[]>(() => initialMessages(repo));
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [responding, setResponding] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -156,9 +111,8 @@ export function ChatView() {
       activeRepoSlug.current = slug;
       conversationSeq.current += 1;
       // Clear while the repo's history loads — showing the previous repo's
-      // transcript between the switch and the fetch would misattribute it. A
-      // repo without a row id has nothing persisted, so show the greeting.
-      setMessages(repo?.id ? [] : initialMessages(repo));
+      // transcript between the switch and the fetch would misattribute it.
+      setMessages([]);
     }
   }, [repo]);
 
@@ -196,13 +150,22 @@ export function ChatView() {
     };
   }, [repo, router]);
 
-  // Load the selected repo's saved conversation once. Re-selecting the same
-  // repo keeps the already-loaded thread instead of re-fetching.
-  const lastLoadedRepoId = useRef<string | undefined>(undefined);
+  // Load the selected repo's saved conversation. The pathname is the trigger:
+  // each time the page becomes `/chat` (initial mount, or a return from /keys,
+  // /upload-repo, the sidebar, …) the history is re-fetched, and switching
+  // repos re-fetches too. A ref tracks the last repo loaded so re-selecting the
+  // SAME repo doesn't refetch, but it is invalidated whenever the page leaves
+  // /chat — so coming back always loads, even with the identical repo selected.
+  const isChatPage = pathname === "/chat";
+  const lastLoadedRepo = useRef("");
   useEffect(() => {
+    if (!isChatPage) {
+      lastLoadedRepo.current = "";
+      return;
+    }
     const id = repo?.id;
-    if (!id || id === lastLoadedRepoId.current) return;
-    lastLoadedRepoId.current = id;
+    if (!id || id === lastLoadedRepo.current) return;
+    lastLoadedRepo.current = id;
 
     const seq = conversationSeq.current;
     let cancelled = false;
@@ -210,16 +173,18 @@ export function ChatView() {
     setHistoryError("");
 
     fetchMessages(id).then((result) => {
+      console.log("Result ->", result);
       if (cancelled || seq !== conversationSeq.current) return;
       setHistoryLoading(false);
 
       if (!result.ok) {
         setHistoryError(result.error);
-        setMessages(initialMessages(repo));
+        setMessages([]);
         return;
       }
-
+      console.log(result.messages.length > 0);
       if (result.messages.length > 0) {
+        console.log("check 1");
         setMessages(
           result.messages.map((m) => ({
             id: m.id,
@@ -228,15 +193,16 @@ export function ChatView() {
             sources: m.sources.length > 0 ? m.sources : undefined,
           })),
         );
+        console.log("check 2");
       } else {
-        setMessages(initialMessages(repo));
+        setMessages([]);
       }
     });
 
     return () => {
       cancelled = true;
     };
-  }, [repo]);
+  }, [repo, isChatPage]);
 
   // Pin to the newest message. Smooth scrolling would fight the streaming
   // updates, so jump instantly while a reply is coming in.
@@ -462,14 +428,10 @@ export function ChatView() {
                   type="submit"
                   size="md"
                   disabled={responding || !repo || !input.trim()}
-                  className="h-[38px] w-[38px] shrink-0 rounded-xl p-0"
-                  aria-label="Send message"
+                  className="h-[38px] shrink-0 rounded-xl px-4"
+                  aria-label={responding ? "Working on your question…" : "Send message"}
                 >
-                  {responding ? (
-                    <SpinnerIcon className="h-4 w-4" />
-                  ) : (
-                    <SendIcon className="h-4 w-4" />
-                  )}
+                  {responding ? "Working…" : "Send"}
                 </Button>
               </div>
               <p className="mt-2 px-1 text-[11.5px] text-muted">

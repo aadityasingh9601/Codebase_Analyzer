@@ -725,6 +725,31 @@ def _suggests_rate_limit(message: str) -> bool:
     return any(token in lowered for token in _RATE_LIMIT_MARKERS)
 
 
+def _select_provider_key(user_id: str, provider: str) -> dict:
+    """Best available stored key row for `provider`, or raise a clear error.
+
+    422 when the user has never saved a key for the provider; 400 when keys
+    exist but every one is currently rate-limited/exhausted. Used both for the
+    initial pick and to re-route after a key is marked exhausted mid-query.
+    """
+    db = _db()
+    row = api_key_rotation.get_available_api_key(user_id, provider, db)
+    if row is not None:
+        return row
+    if api_key_rotation.has_saved_key(user_id, provider, db):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "All your API keys for this provider are currently exhausted. "
+                "Add a new key on /keys, or wait a bit for their rate limits to reset."
+            ),
+        )
+    raise HTTPException(
+        status_code=422,
+        detail=f"No API key saved for provider {provider!r}. Add one on /keys first.",
+    )
+
+
 def _decrypt_key_row(row: dict, user_id: str, provider: str) -> str:
     """Decrypt one stored key row's blob in memory for this request only."""
     try:
@@ -1475,6 +1500,8 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
       - before/around routing (unknown repo, missing index) -> 4xx/5xx status;
       - inside the answer itself (model error, exhausted budget) -> 200 with
         `error` populated, so the caller still gets the tier and timing.
+      - a BYOK key that gets rate-limited is parked and the next available key
+        is tried automatically; when none remain -> 400 "all keys exhausted".
     """
     user_id = verify_bearer_token(authorization)
     print(payload)
@@ -1494,25 +1521,7 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
     used_key_row = None
     if payload.provider:
         _require_provider(provider)
-        db = _db()
-        used_key_row = api_key_rotation.get_available_api_key(user_id or "", provider, db)
-        if used_key_row is None:
-            if api_key_rotation.has_saved_key(user_id or "", provider, db):
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "All your API keys for this provider are currently "
-                        "exhausted. Add a new key on /keys, or wait a bit for "
-                        "their rate limits to reset."
-                    ),
-                )
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"No API key saved for provider {provider!r}. "
-                    "Add one on /keys first."
-                ),
-            )
+        used_key_row = _select_provider_key(user_id or "", provider)
         api_key = _decrypt_key_row(used_key_row, user_id or "", provider)
     model = (payload.model or "").strip()
 
@@ -1542,40 +1551,50 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
                     detail="Could not retrieve your repository index. Reconnect it from /get-started.",
                 ) from e
 
-            try:
-                result = await run_in_threadpool(
-                    query_router.answer_for_session,
-                    session_id,
-                    full_path,
-                    light_path,
-                    payload.question,
-                    provider,
-                    api_key,
-                    model,
+            # Answer, re-routing across the caller's keys if the current one is
+            # rate-limited. Each failed key is parked (marked exhausted) before
+            # re-selecting, so the pool shrinks by one per pass and the loop is
+            # bounded by the number of keys; when none remain, re-selection
+            # raises the clear "all keys exhausted" 400.
+            while True:
+                try:
+                    result = await run_in_threadpool(
+                        query_router.answer_for_session,
+                        session_id,
+                        full_path,
+                        light_path,
+                        payload.question,
+                        provider,
+                        api_key,
+                        model,
+                    )
+                except FileNotFoundError as e:
+                    raise HTTPException(status_code=404, detail=_query_error_detail(e)) from e
+                except ValueError as e:
+                    raise HTTPException(status_code=422, detail=str(e)) from e
+                except Exception as e:
+                    log.exception("[query] %s@%s failed", repo_name, sha[:12])
+                    raise HTTPException(status_code=502, detail=_query_error_detail(e)) from e
+
+                if used_key_row is None or not _suggests_rate_limit(result.error or ""):
+                    break
+
+                log.info(
+                    "[query] key %s rate-limited; rotating to the next key",
+                    used_key_row["id"],
                 )
-            except FileNotFoundError as e:
-                raise HTTPException(status_code=404, detail=_query_error_detail(e)) from e
-            except ValueError as e:
-                raise HTTPException(status_code=422, detail=str(e)) from e
-            except Exception as e:
-                log.exception("[query] %s@%s failed", repo_name, sha[:12])
-                raise HTTPException(status_code=502, detail=_query_error_detail(e)) from e
+                api_key_rotation.mark_key_exhausted(used_key_row["id"], _db())
+                used_key_row = _select_provider_key(user_id or "", provider)
+                api_key = _decrypt_key_row(used_key_row, user_id or "", provider)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
     error = _cap_error_text(result.error) or None
 
-    # Rotation bookkeeping for the key that answered this query: a rate-limit /
-    # quota failure marks it exhausted so the next request rotates to another
-    # key; any other outcome (including a generic model error) counts as a use
-    # so rotation stays least-recently-used within priority.
-    if used_key_row is not None:
-        key_id = used_key_row["id"]
-        if error and _suggests_rate_limit(error):
-            api_key_rotation.mark_key_exhausted(key_id, _db())
-            log.info("[query] marked key %s exhausted (rate-limit)", key_id)
-        elif not error:
-            api_key_rotation.update_key_last_used(key_id, _db())
+    # The key that produced the final answer gets its LRU stamp. A key that was
+    # rate-limited never reaches here — it was marked exhausted in the loop.
+    if used_key_row is not None and not error:
+        api_key_rotation.update_key_last_used(used_key_row["id"], _db())
 
     return UserQueryResponse(
         answer=result.answer or "",

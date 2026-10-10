@@ -548,7 +548,7 @@ const MessageBubble = memo(function MessageBubble({
           <p className="mt-3 rounded-lg border border-border-base bg-surface-subtle px-3 py-2 text-[12.5px] leading-relaxed text-muted">
             {message.content ? "Note: " : ""}
             {message.error}
-            {message.error.includes("No API key saved") ? (
+            {/No API key saved|exhausted/.test(message.error) ? (
               <Link href="/keys" className="ml-1 font-medium text-accent hover:underline">
                 Add a key
               </Link>

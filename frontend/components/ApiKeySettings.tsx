@@ -24,6 +24,7 @@ import {
   deleteApiKey,
   listSavedApiKeys,
   saveApiKey,
+  setApiKeyPriority,
   type SavedApiKey,
 } from "@/app/lib/actions/apiKeys";
 
@@ -35,8 +36,9 @@ import {
  * MASTER_SECRET`, computed fresh and never stored), encrypts the key with
  * AES-256-GCM, and stores only the blob + a last-4 hint. The plaintext never
  * lives in this browser afterwards: this tab only remembers which saved
- * provider to ask with, and /chat sends just that id — the backend decrypts
- * the key server-side for each request.
+ * provider to ask with, and /chat sends just that id — the backend picks one
+ * available key for the provider (rotating around exhausted ones) and decrypts
+ * it server-side for each request.
  */
 export function ApiKeySettings() {
   const activeProvider = useActiveProvider();
@@ -45,9 +47,10 @@ export function ApiKeySettings() {
   const [loadingKeys, setLoadingKeys] = useState(true);
   const [loadError, setLoadError] = useState("");
 
-  // Add/replace form.
+  // Add form.
   const [provider, setProvider] = useState<ProviderId>("openrouter");
   const [keyValue, setKeyValue] = useState("");
+  const [labelValue, setLabelValue] = useState("");
   const [saving, setSaving] = useState(false);
 
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
@@ -78,7 +81,7 @@ export function ApiKeySettings() {
     setSaving(true);
     setNotice(null);
     try {
-      const result = await saveApiKey(provider, keyValue.trim());
+      const result = await saveApiKey(provider, keyValue.trim(), labelValue || undefined);
 
       if (!result.ok) {
         setNotice({ tone: "error", text: result.error });
@@ -87,10 +90,11 @@ export function ApiKeySettings() {
 
       // Auto-activate the just-saved provider so it is immediately usable in
       // /chat without another click.
+      const name = result.key.label?.trim() || PROVIDER_LABELS[provider];
       setActiveProvider({ provider, keyHint: result.key.keyHint });
       setNotice({
         tone: "success",
-        text: `Saved ${PROVIDER_LABELS[provider]} key (${result.key.keyHint}). It is now the active key for this tab's chat.`,
+        text: `Saved ${name} key (${result.key.keyHint}). ${PROVIDER_LABELS[provider]} is now this tab's active provider.`,
       });
       refresh();
     } catch (err) {
@@ -102,24 +106,39 @@ export function ApiKeySettings() {
       // Clear the key after the attempt, success or failure: the secret must
       // not linger in the field.
       setKeyValue("");
+      setLabelValue("");
       setSaving(false);
     }
   }
 
   async function handleDelete(row: SavedApiKey) {
     setNotice(null);
-    const result = await deleteApiKey(row.provider);
+    const result = await deleteApiKey(row.id);
 
     if (!result.ok) {
       setNotice({ tone: "error", text: result.error });
       return;
     }
 
-    if (activeProvider?.provider === row.provider) clearActiveProvider();
+    // Deleting one of several keys for a provider never stops you using the
+    // others, so the active provider is left untouched.
+    const name = row.label?.trim() || PROVIDER_LABELS[row.provider];
     setNotice({
       tone: "success",
-      text: `Removed the stored ${PROVIDER_LABELS[row.provider]} key.`,
+      text: `Removed ${name} key (${row.keyHint}).`,
     });
+    refresh();
+  }
+
+  async function handleBumpPriority(row: SavedApiKey) {
+    setNotice(null);
+    const result = await setApiKeyPriority(row.id, row.priority + 1);
+
+    if (!result.ok) {
+      setNotice({ tone: "error", text: result.error });
+      return;
+    }
+
     refresh();
   }
 
@@ -186,17 +205,26 @@ export function ApiKeySettings() {
             <ul className="space-y-2.5">
               {saved.map((row) => (
                 <li
-                  key={row.provider}
+                  key={row.id}
                   className="flex items-center justify-between gap-3 rounded-xl border border-border-base bg-surface-subtle px-3.5 py-2.5"
                 >
                   <div className="min-w-0">
                     <p className="flex items-center gap-1.5 text-[13px] font-medium text-foreground">
-                      <KeyIcon className="h-3.5 w-3.5 text-muted" />
-                      {PROVIDER_LABELS[row.provider]}
+                      <KeyIcon className="h-3.5 w-3.5 shrink-0 text-muted" />
+                      <span className="truncate">
+                        {row.label?.trim() || PROVIDER_LABELS[row.provider]}
+                      </span>
+                      {row.isExhausted ? (
+                        <span className="shrink-0 rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10.5px] font-medium text-amber-700 dark:text-amber-300">
+                          Rate limited
+                        </span>
+                      ) : null}
                     </p>
-                    <p className="mt-0.5 font-mono text-[12px] text-muted">{row.keyHint}</p>
+                    <p className="mt-0.5 font-mono text-[12px] text-muted">
+                      {PROVIDER_LABELS[row.provider]} · …{row.keyHint}
+                    </p>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
                     <Button
                       type="button"
                       size="sm"
@@ -212,7 +240,17 @@ export function ApiKeySettings() {
                       type="button"
                       size="sm"
                       variant="ghost"
-                      aria-label={`Delete ${PROVIDER_LABELS[row.provider]} key`}
+                      aria-label={`Raise priority of ${row.label?.trim() || PROVIDER_LABELS[row.provider]} key`}
+                      title="Raise priority (tried first)"
+                      onClick={() => handleBumpPriority(row)}
+                    >
+                      ↑
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      aria-label={`Delete ${row.label?.trim() || PROVIDER_LABELS[row.provider]} key`}
                       title="Delete stored key"
                       onClick={() => handleDelete(row)}
                     >
@@ -227,8 +265,12 @@ export function ApiKeySettings() {
 
         <section className="rounded-2xl border border-border-base bg-surface p-5">
           <h2 className="mb-3 text-[15px] font-semibold text-foreground">
-            Add or replace a key
+            Add a key
           </h2>
+          <p className="mb-4 text-[12.5px] leading-relaxed text-muted">
+            You can keep several keys per provider — the server rotates between
+            them and skips any that are rate-limited.
+          </p>
 
           <form onSubmit={handleAddKey} className="space-y-4">
             <div>
@@ -250,6 +292,23 @@ export function ApiKeySettings() {
                   </option>
                 ))}
               </select>
+            </div>
+
+            <div>
+              <label
+                htmlFor="key-label"
+                className="mb-1.5 block text-[12.5px] font-medium text-foreground"
+              >
+                Label <span className="font-normal text-muted">(optional)</span>
+              </label>
+              <Input
+                id="key-label"
+                type="text"
+                maxLength={60}
+                placeholder="e.g. Work, Personal"
+                value={labelValue}
+                onChange={(e) => setLabelValue(e.target.value)}
+              />
             </div>
 
             <div>
@@ -303,8 +362,9 @@ export function ApiKeySettings() {
         </section>
 
         <p className="text-center text-[12px] leading-relaxed text-muted">
-          Provider keys are yours. We store them encrypted and only ever use the
-          key you choose during the current chat session.
+          Provider keys are yours. We store them encrypted and pick one of your
+          saved keys each time you ask a question — rotating around any that are
+          rate-limited.
         </p>
       </div>
     </div>

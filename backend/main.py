@@ -6,9 +6,10 @@ main.py — HTTP API for RepoChat.
     GET  /api/userquery   answer a question about one of those repositories
     GET  /api/messages    a repository conversation's saved messages
     POST /api/messages    persist one user or assistant message
-    GET  /api/keys        list the caller's stored BYOK key "hints"
-    PUT  /api/keys        save (or replace) a provider API key, encrypted at rest
-    DELETE /api/keys/{provider} remove a stored key
+    GET  /api/keys        list the caller's stored BYOK keys (hints + labels)
+    PUT  /api/keys        add a provider API key, encrypted at rest
+    PATCH /api/keys/{id}  set a stored key's rotation priority
+    DELETE /api/keys/{id} remove one stored key
     GET  /api/health      liveness probe
 
 Repositories are PRIVATE to the user who uploaded them. When the web app
@@ -49,10 +50,11 @@ the caller's provider API key in plaintext (over HTTPS); the server derives a
 per-user encryption key (PBKDF2 over `user_id` + `MASTER_SECRET`, computed fresh
 and never stored), encrypts the key with AES-256-GCM, and stores ONLY the
 encrypted blob plus a last-4 hint in the `user_api_keys` table (see
-supabase_user_api_keys.sql). Every `/api/userquery` request re-derives that
-key, decrypts the caller's stored blob for the requested provider in memory,
-uses it for that one answer, and discards everything. The plaintext key never
-touches disk or logs, and the derived key is never persisted.
+supabase_user_api_keys.sql). A user may keep MANY keys per provider; every
+`/api/userquery` request re-derives the per-user key, picks one available key
+for the requested provider with api_key_rotation.py, decrypts its blob in
+memory, uses it for that one answer, and discards everything. The plaintext key
+never touches disk or logs, and the derived key is never persisted.
 
 Auth: callers send the Supabase access token as `Authorization: Bearer <jwt>`,
 the same token the browser holds. It is verified against the project's JWKS, so
@@ -116,6 +118,7 @@ from repo_storage import (  # noqa: E402
 )
 import query_router  # noqa: E402
 import key_vault  # noqa: E402
+import api_key_rotation  # noqa: E402
 
 log = logging.getLogger("repochat")
 
@@ -309,17 +312,39 @@ class SaveApiKeyRequest(BaseModel):
             "plaintext."
         ),
     )
+    label: str | None = Field(
+        None,
+        max_length=60,
+        description="Optional user-chosen name for this key, e.g. 'Work'.",
+    )
+
+
+class ApiKeyPriorityRequest(BaseModel):
+    priority: int = Field(
+        ...,
+        ge=0,
+        le=1000,
+        description="Higher priority keys are tried first during rotation.",
+    )
 
 
 class SaveApiKeyResponse(BaseModel):
     message: str = Field("saved", description="Always 'saved' on success.")
+    id: str = Field(..., description="The new user_api_keys row id.")
     provider: str = Field(..., description="Provider id, e.g. 'openrouter'.")
-    key_hint: str = Field(..., description="The stored last-4 hint for this provider's key.")
+    key_hint: str = Field(..., description="The stored last-4 hint for this key.")
+    label: str | None = Field(None, description="Optional name the caller gave this key.")
 
 
 class ApiKeyInfo(BaseModel):
+    id: str = Field(..., description="The user_api_keys row id (used to delete/prioritise).")
     provider: str = Field(..., description="Provider id, e.g. 'openrouter'.")
-    key_hint: str = Field(..., description="The stored last-N hint for this provider's key.")
+    key_hint: str = Field(..., description="The stored last-N hint for this key.")
+    label: str | None = Field(None, description="Optional name the caller gave this key.")
+    is_exhausted: bool = Field(
+        False, description="True when the key last hit a provider rate-limit."
+    )
+    priority: int = Field(0, description="Higher priority keys are tried first.")
 
 
 class ListApiKeysResponse(BaseModel):
@@ -628,70 +653,90 @@ def _list_user_api_keys(user_id: str) -> list[dict]:
     data = (
         _db()
         .table(API_KEYS_TABLE)
-        .select("provider, key_hint")
+        .select("id, provider, key_hint, label, is_exhausted, priority")
         .eq("user_id", user_id)
         .order("provider")
+        .order("priority", desc=True)
+        .order("created_at")
         .execute()
     )
     return list(data.data or [])
 
 
-def _get_user_api_key(user_id: str, provider: str) -> dict | None:
+def _insert_api_key(
+    user_id: str, provider: str, encrypted_blob: str, key_hint: str, label: str | None
+) -> str:
+    """Add a new key row (never replaces). Returns the new row id.
+
+    A user may keep many keys per provider, so this is a plain insert; there is
+    no uniqueness on (user_id, provider).
+    """
     data = (
         _db()
         .table(API_KEYS_TABLE)
-        .select("encrypted_blob, key_hint")
-        .eq("user_id", user_id)
-        .eq("provider", provider)
-        .limit(1)
+        .insert(
+            {
+                "user_id": user_id,
+                "provider": provider,
+                "encrypted_blob": encrypted_blob,
+                "key_hint": key_hint,
+                "label": label,
+            }
+        )
         .execute()
     )
     rows = list(data.data or [])
-    return rows[0] if rows else None
+    if not rows:
+        raise RuntimeError("Could not read back the saved API key row.")
+    return str(rows[0]["id"])
 
 
-def _upsert_api_key(user_id: str, provider: str, encrypted_blob: str, key_hint: str) -> None:
-    _db().table(API_KEYS_TABLE).upsert(
-        {
-            "user_id": user_id,
-            "provider": provider,
-            "encrypted_blob": encrypted_blob,
-            "key_hint": key_hint,
-        },
-        on_conflict="user_id,provider",
-    ).execute()
+def _delete_api_key(user_id: str, key_id: str) -> None:
+    _db().table(API_KEYS_TABLE).delete().eq("user_id", user_id).eq("id", key_id).execute()
 
 
-def _delete_api_key(user_id: str, provider: str) -> None:
-    _db().table(API_KEYS_TABLE).delete().eq("user_id", user_id).eq("provider", provider).execute()
+def _set_key_priority(user_id: str, key_id: str, priority: int) -> None:
+    (
+        _db()
+        .table(API_KEYS_TABLE)
+        .update({"priority": priority})
+        .eq("user_id", user_id)
+        .eq("id", key_id)
+        .execute()
+    )
 
 
-def _decrypt_user_provider_key(user_id: str, provider: str) -> str:
-    """Decrypt the caller's stored key for `provider` in memory.
+# Words providers use when a key is being rate-limited / out of quota. We are
+# deliberately strict: an internal "budget exhausted" message must NOT mark a
+# user's key as exhausted.
+_RATE_LIMIT_MARKERS = (
+    "429",
+    "rate limit",
+    "rate-limit",
+    "rate_limit",
+    "too many requests",
+    "quota",
+    "insufficient_quota",
+)
 
-    Phase 2 of BYOK: the per-user key is re-derived fresh from
-    `user_id + MASTER_SECRET` on this request, the stored blob is decrypted,
-    and result lives only in this call's scope. Returns the plaintext API key.
-    """
-    row = _get_user_api_key(user_id, provider)
-    if row is None:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"No API key saved for provider {provider!r}. "
-                "Add one on /keys first."
-            ),
-        )
+
+def _suggests_rate_limit(message: str) -> bool:
+    lowered = (message or "").lower()
+    return any(token in lowered for token in _RATE_LIMIT_MARKERS)
+
+
+def _decrypt_key_row(row: dict, user_id: str, provider: str) -> str:
+    """Decrypt one stored key row's blob in memory for this request only."""
     try:
         return key_vault.decrypt_api_key(row["encrypted_blob"], user_id)
     except Exception as e:
-        log.warning("Could not decrypt stored key for %s/%s: %s", user_id, provider, e)
+        log.warning("Could not decrypt stored key %s for %s/%s: %s", row.get("id"), user_id, provider, e)
         raise HTTPException(
             status_code=400,
             detail=(
-                f"The stored {provider} key could not be decrypted. It was "
+                f"A stored {provider} key could not be decrypted. It was "
                 "probably saved before the server-side encryption change — "
-                "re-save it on /keys."
+                "remove it on /keys and add it again."
             ),
         ) from e
 
@@ -1330,24 +1375,35 @@ def _download_index(user_id: str, owner: str, repo: str, sha: str, full_path: st
 
 @app.get("/api/keys", response_model=ListApiKeysResponse)
 def list_keys(authorization: str = Header(default="")) -> ListApiKeysResponse:
-    """Provider ids + non-secret hints for the caller's stored key blobs."""
+    """Non-secret metadata (id, hint, label, status) for the caller's saved keys."""
     user_id = verify_bearer_token(authorization)
     rows = _list_user_api_keys(user_id or "")
     return ListApiKeysResponse(
-        keys=[ApiKeyInfo(provider=r["provider"], key_hint=r["key_hint"]) for r in rows]
+        keys=[
+            ApiKeyInfo(
+                id=str(r["id"]),
+                provider=r["provider"],
+                key_hint=r["key_hint"],
+                label=r.get("label"),
+                is_exhausted=bool(r.get("is_exhausted")),
+                priority=int(r.get("priority") or 0),
+            )
+            for r in rows
+        ]
     )
 
 
 @app.put("/api/keys", response_model=SaveApiKeyResponse)
 def save_key(payload: SaveApiKeyRequest, authorization: str = Header(default="")) -> SaveApiKeyResponse:
-    """Save (or replace) a provider's API key, encrypted at rest.
+    """Add a provider's API key, encrypted at rest.
 
-    Phase 1 of BYOK: the plaintext key travels from the browser over HTTPS; the
-    server validates it (format, then a minimal authenticated call to the
-    provider), derives a per-user key (PBKDF2 over `user_id + MASTER_SECRET`,
-    never stored), encrypts the key with AES-256-GCM, and stores only the blob
-    + a last-4 hint in `user_api_keys`. The plaintext never reaches disk or
-    logs, and nothing is saved unless the provider accepts the key.
+    The plaintext key travels from the browser over HTTPS; the server validates
+    it (format, then a minimal authenticated call to the provider), derives a
+    per-user key (PBKDF2 over `user_id + MASTER_SECRET`, never stored), encrypts
+    the key with AES-256-GCM, and stores only the blob + a last-4 hint in
+    `user_api_keys`. A user may keep many keys per provider, so this always adds
+    a new row. The plaintext never reaches disk or logs, and nothing is saved
+    unless the provider accepts the key.
     """
     user_id = verify_bearer_token(authorization) or ""
     _require_provider(payload.provider)
@@ -1355,6 +1411,8 @@ def save_key(payload: SaveApiKeyRequest, authorization: str = Header(default="")
     api_key = payload.api_key.strip()
     if not api_key:
         raise HTTPException(status_code=422, detail="API key must not be empty")
+
+    label = (payload.label or "").strip() or None
 
     # Save gate: format first (fast), then let the provider authenticate it.
     # A validation failure (format, 401/403, unreachable) aborts the store.
@@ -1372,15 +1430,33 @@ def save_key(payload: SaveApiKeyRequest, authorization: str = Header(default="")
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-    _upsert_api_key(user_id, payload.provider, encrypted_blob, hint)
-    return SaveApiKeyResponse(message="saved", provider=payload.provider, key_hint=hint)
+    key_id = _insert_api_key(user_id, payload.provider, encrypted_blob, hint, label)
+    return SaveApiKeyResponse(
+        message="saved",
+        id=key_id,
+        provider=payload.provider,
+        key_hint=hint,
+        label=label,
+    )
 
 
-@app.delete("/api/keys/{provider}", status_code=204)
-def delete_key(provider: str, authorization: str = Header(default="")) -> Response:
+@app.patch("/api/keys/{key_id}", status_code=204)
+def set_key_priority_route(
+    key_id: str,
+    payload: ApiKeyPriorityRequest,
+    authorization: str = Header(default=""),
+) -> Response:
+    """Set one stored key's rotation priority (higher is tried first)."""
     user_id = verify_bearer_token(authorization) or ""
-    _require_provider(provider)
-    _delete_api_key(user_id, provider)
+    _set_key_priority(user_id, key_id, payload.priority)
+    return Response(status_code=204)
+
+
+@app.delete("/api/keys/{key_id}", status_code=204)
+def delete_key(key_id: str, authorization: str = Header(default="")) -> Response:
+    """Remove one stored key by id. The user_id filter makes it owner-scoped."""
+    user_id = verify_bearer_token(authorization) or ""
+    _delete_api_key(user_id, key_id)
     return Response(status_code=204)
 
 
@@ -1407,16 +1483,37 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
     if not question:
         raise HTTPException(status_code=422, detail="question must not be empty")
 
-    # BYOK (Phase 2): re-derive the caller's per-user key server-side and
-    # decrypt their stored blob for the requested provider — in memory, for
-    # this request only. No key travels in the request body. Omitting the
-    # provider means "use the server's default model credential." The chosen
-    # model (optional) is passed through to the RLM for this request.
+    # BYOK (Phase 2): pick the best available stored key for the requested
+    # provider (api_key_rotation), re-derive the caller's per-user key
+    # server-side and decrypt that key's blob in memory — for this request
+    # only. No key travels in the request body. Omitting the provider means
+    # "use the server's default model credential." The chosen model (optional)
+    # is passed through to the RLM for this request.
     provider = (payload.provider or "openrouter").strip().lower()
     api_key = ""
+    used_key_row = None
     if payload.provider:
         _require_provider(provider)
-        api_key = _decrypt_user_provider_key(user_id, provider)
+        db = _db()
+        used_key_row = api_key_rotation.get_available_api_key(user_id or "", provider, db)
+        if used_key_row is None:
+            if api_key_rotation.has_saved_key(user_id or "", provider, db):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "All your API keys for this provider are currently "
+                        "exhausted. Add a new key on /keys, or wait a bit for "
+                        "their rate limits to reset."
+                    ),
+                )
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"No API key saved for provider {provider!r}. "
+                    "Add one on /keys first."
+                ),
+            )
+        api_key = _decrypt_key_row(used_key_row, user_id or "", provider)
     model = (payload.model or "").strip()
 
     row = _user_repo_target(user_id, payload.repo_name or "")
@@ -1467,6 +1564,18 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
         shutil.rmtree(workdir, ignore_errors=True)
 
     error = _cap_error_text(result.error) or None
+
+    # Rotation bookkeeping for the key that answered this query: a rate-limit /
+    # quota failure marks it exhausted so the next request rotates to another
+    # key; any other outcome (including a generic model error) counts as a use
+    # so rotation stays least-recently-used within priority.
+    if used_key_row is not None:
+        key_id = used_key_row["id"]
+        if error and _suggests_rate_limit(error):
+            api_key_rotation.mark_key_exhausted(key_id, _db())
+            log.info("[query] marked key %s exhausted (rate-limit)", key_id)
+        elif not error:
+            api_key_rotation.update_key_last_used(key_id, _db())
 
     return UserQueryResponse(
         answer=result.answer or "",

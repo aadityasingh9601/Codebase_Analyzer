@@ -71,6 +71,7 @@ Environment (see backend/.env):
     SUPABASE_URL, SUPABASE_SECRET_KEY, SUPABASE_BUCKET  for storage + repos table
     SUPABASE_JWKS_URL                                  for token verification
     GITHUB_TOKEN                                       optional, raises API rate limits
+    CORS_ALLOW_ORIGINS                                 comma-separated origins allowed to call the API
     MAX_CONCURRENT_INDEXES                             concurrent clone+parse jobs
 """
 
@@ -91,6 +92,7 @@ import jwt
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.concurrency import run_in_threadpool
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
 # The pipeline modules live beside this file as flat scripts. Inserting the
@@ -169,6 +171,35 @@ app = FastAPI(
         "Indexes GitHub repositories for the signed-in user who uploaded them. "
         "Repositories are private per user; a user may keep at most two."
     ),
+)
+
+
+# ---------------------------------------------------------------------------
+# CORS
+# ---------------------------------------------------------------------------
+# The web app talks to this API server-to-server through Next.js server actions,
+# so browsers never call it directly — which means CORS is not exercised today.
+# It is configured anyway for deployments that do expose the origin (direct
+# browser calls, a public API, cross-origin debugging), with an explicit,
+# credentials-capable allowlist. `CORS_ALLOW_ORIGINS` is a comma-separated
+# list; the default covers the local dev pair (frontend on :3000, API on :8000).
+# Never set it to "*" here: the 401/403 paths and allowed methods stay sharp,
+# and an origin list keeps preflight responses honest when cookies are added.
+
+def _cors_origins() -> list[str]:
+    raw = os.getenv(
+        "CORS_ALLOW_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000",
+    )
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins(),
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 

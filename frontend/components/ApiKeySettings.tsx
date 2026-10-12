@@ -1,25 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
-import {
-  AlertCircleIcon,
-  KeyIcon,
-  SpinnerIcon,
-  TrashIcon,
-} from "@/components/icons";
+import { KeyIcon, SpinnerIcon, TrashIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
-import {
-  PROVIDER_LABELS,
-  PROVIDERS,
-  clearActiveProvider,
-  setActiveProvider,
-  type ProviderId,
-} from "@/lib/api-key-store";
+import { PROVIDER_LABELS, PROVIDERS, type ProviderId } from "@/lib/api-key-store";
 import { KEY_PATTERNS, validateApiKey } from "@/lib/validateApiKey";
-import { useActiveProvider } from "@/hooks/use-active-provider";
 import {
   deleteApiKey,
   listSavedApiKeys,
@@ -41,8 +28,6 @@ import {
  * it server-side for each request.
  */
 export function ApiKeySettings() {
-  const activeProvider = useActiveProvider();
-
   const [saved, setSaved] = useState<SavedApiKey[]>([]);
   const [loadingKeys, setLoadingKeys] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -88,13 +73,10 @@ export function ApiKeySettings() {
         return;
       }
 
-      // Auto-activate the just-saved provider so it is immediately usable in
-      // /chat without another click.
       const name = result.key.label?.trim() || PROVIDER_LABELS[provider];
-      setActiveProvider({ provider, keyHint: result.key.keyHint });
       setNotice({
         tone: "success",
-        text: `Saved ${name} key (${result.key.keyHint}). ${PROVIDER_LABELS[provider]} is now this tab's active provider.`,
+        text: `Saved ${name} key (${result.key.keyHint}).`,
       });
       refresh();
     } catch (err) {
@@ -142,11 +124,6 @@ export function ApiKeySettings() {
     refresh();
   }
 
-  function handleStopUsing() {
-    clearActiveProvider();
-    setNotice({ tone: "success", text: "Your key is no longer active in this tab." });
-  }
-
   return (
     <div className="mx-auto w-full max-w-[640px] px-5 pb-16 pt-8">
       <div className="mb-6">
@@ -166,25 +143,6 @@ export function ApiKeySettings() {
 
       <div className="space-y-6">
         {notice ? <Notice tone={notice.tone}>{notice.text}</Notice> : null}
-
-        {activeProvider ? (
-          <section className="rounded-2xl border border-emerald-500/25 bg-emerald-500/[0.07] p-5">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-[13px] font-medium text-emerald-700 dark:text-emerald-300">
-                  Active key for this tab
-                </p>
-                <p className="mt-1 text-[12.5px] text-muted">
-                  {PROVIDER_LABELS[activeProvider.provider]}
-                  {activeProvider.keyHint ? ` · ${activeProvider.keyHint}` : ""}
-                </p>
-              </div>
-              <Button type="button" size="sm" variant="secondary" onClick={handleStopUsing}>
-                Stop using
-              </Button>
-            </div>
-          </section>
-        ) : null}
 
         <section className="rounded-2xl border border-border-base bg-surface p-5">
           <h2 className="mb-3 text-[15px] font-semibold text-foreground">Saved keys</h2>
@@ -225,17 +183,6 @@ export function ApiKeySettings() {
                     </p>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      disabled={activeProvider?.provider === row.provider}
-                      onClick={() =>
-                        setActiveProvider({ provider: row.provider, keyHint: row.keyHint })
-                      }
-                    >
-                      {activeProvider?.provider === row.provider ? "Using now" : "Use"}
-                    </Button>
                     <Button
                       type="button"
                       size="sm"
@@ -348,17 +295,6 @@ export function ApiKeySettings() {
               </Button>
             </div>
           </form>
-
-          <div className="mt-4 flex items-start gap-2 rounded-xl border border-border-base bg-surface-subtle px-3.5 py-3 text-[12.5px] leading-relaxed text-muted">
-            <AlertCircleIcon className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>
-              Want your questions answered without adding a key?
-              <Link href="/chat" className="ml-1 text-accent hover:underline">
-                Chat with the free default model
-              </Link>
-              — your key only opts you into your own provider.
-            </span>
-          </div>
         </section>
 
         <p className="text-center text-[12px] leading-relaxed text-muted">

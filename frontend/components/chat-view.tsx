@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { useSelectedRepo } from "@/hooks/use-selected-repo";
 import { useChatMode } from "@/hooks/use-chat-mode";
 import { clearSelectedRepo, writeSelectedRepo, type SelectedRepo } from "@/lib/repo";
-import { setActiveProvider, type ProviderId } from "@/lib/api-key-store";
+import { type ProviderId } from "@/lib/api-key-store";
 import { setChatMode } from "@/lib/chat-mode-store";
 import {
   ProviderModelSelector,
@@ -313,12 +313,9 @@ export function ChatView() {
     [send],
   );
 
-  // Provider/model dropdown change: apply locally, and persist the provider as
-  // this tab's active provider so /keys stays in sync.
   function handleSelectionChange(selection: ProviderModelSelection) {
     setProvider(selection.provider);
     setModel(selection.model);
-    setActiveProvider({ provider: selection.provider });
   }
 
   function handleChangeRepo() {

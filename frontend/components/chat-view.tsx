@@ -66,6 +66,19 @@ const SUGGESTIONS = [
   "What would break if I removed this cache?",
 ];
 
+/** How hard the backend should think before answering. */
+type Effort = "low" | "medium" | "high";
+
+/** Effort → RLM max iterations. Higher effort is slower and uses more tokens. */
+const EFFORT_MAX_ITERATIONS: Record<Effort, number> = {
+  low: 8,
+  medium: 13,
+  high: 20,
+};
+
+const EFFORT_NOTE =
+  "High effort means more thorough responses, but takes time and uses your limits faster.";
+
 /**
  * Save a user question and its assistant answer to the repo's conversation.
  * Sequential on purpose, so the question is always stored before the reply
@@ -109,13 +122,7 @@ export function ChatView() {
   // per the UI spec; changing the provider resets the model to its first one.
   const [provider, setProvider] = useState<ProviderId>("openrouter");
   const [model, setModel] = useState<string>(() => firstModel("openrouter"));
-
-  useEffect(() => {
-    if (chatMode === "free") {
-      setProvider("openrouter");
-      setModel(firstModel("openrouter"));
-    }
-  }, [chatMode]);
+  const [effort, setEffort] = useState<Effort>("medium");
 
   useEffect(() => {
     if (chatMode !== "free" || !repo) return;
@@ -280,7 +287,9 @@ export function ChatView() {
         // The composer's provider + model drive this request. The backend
         // decrypts the caller's stored key for the selected provider and builds
         // the RLM around the chosen model.
-        chatMode === "free" ? { model } : { provider, model },
+        chatMode === "free"
+          ? { model, max_iterations: EFFORT_MAX_ITERATIONS[effort] }
+          : { provider, model, max_iterations: EFFORT_MAX_ITERATIONS[effort] },
       );
 
       setMessages((prev) =>
@@ -307,7 +316,7 @@ export function ChatView() {
       // but a database hiccup must never disturb the chat itself.
       void persistConversation(repo, content, result);
     },
-    [repo, responding, provider, model, chatMode],
+    [repo, responding, provider, model, chatMode, effort],
   );
 
   // Retry a past question from its message bubble — identical to typing the
@@ -451,10 +460,31 @@ export function ChatView() {
                   lockedProvider={chatMode === "free" ? provider : undefined}
                 />
                 <div className="flex flex-wrap items-center gap-2">
+                  <div
+                    className="flex items-center gap-1.5 rounded-xl border border-border-base bg-surface px-2.5 py-1.5"
+                    title={EFFORT_NOTE}
+                  >
+                    <span className="text-[11px] font-medium text-muted">Effort</span>
+                    {(["low", "medium", "high"] as const).map((level) => (
+                      <button
+                        key={level}
+                        type="button"
+                        onClick={() => setEffort(level)}
+                        disabled={responding}
+                        className={`rounded-lg px-2 py-0.5 text-[12px] capitalize disabled:opacity-60 ${effort === level ? "bg-accent text-accent-foreground" : "text-muted hover:text-foreground"}`}
+                      >
+                        {level}
+                      </button>
+                    ))}
+                  </div>
                   <div className="flex items-center gap-1.5 rounded-xl border border-border-base bg-surface px-2.5 py-1.5">
                     <button
                       type="button"
-                      onClick={() => setChatMode("free")}
+                      onClick={() => {
+                        setChatMode("free");
+                        setProvider("openrouter");
+                        setModel(firstModel("openrouter"));
+                      }}
                       className={`rounded-lg px-2 py-0.5 text-[12px] ${chatMode === "free" ? "bg-accent text-accent-foreground" : "text-muted hover:text-foreground"}`}
                     >
                       Free

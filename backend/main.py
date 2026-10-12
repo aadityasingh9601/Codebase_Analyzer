@@ -303,6 +303,12 @@ class UserQueryRequest(BaseModel):
             "to use that provider's default model."
         ),
     )
+    max_iterations: int | None = Field(
+        None,
+        ge=1,
+        le=50,
+        description="Cap for RLM iterations (effort control).",
+    )
 
 
 class SaveApiKeyRequest(BaseModel):
@@ -1581,11 +1587,6 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
         api_key = ""
         model = (payload.model or "").strip()
         # Rough pre-check to avoid starting requests that are almost certainly
-        # over quota.
-        if not usage_quota.check_token_quota(
-            user_id, usage_quota.FREE_ESTIMATE_TOKENS, _db()
-        ):
-            raise HTTPException(status_code=402, detail=usage_quota.QUOTA_EXHAUSTED_MESSAGE)
 
     row = _user_repo_target(user_id, payload.repo_name or "")
     repo_name = row["repo_name"]
@@ -1632,8 +1633,10 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
             # raises the clear "all keys exhausted" 400.
             while True:
                 try:
-                    result = await run_in_threadpool(
-                        query_router.answer_for_session,
+                    # Only forward max_iterations when the caller selected an
+                    # effort explicitly; older callers (and tests) omit it and
+                    # rely on answer_for_session's own default.
+                    call_args = (
                         session_id,
                         full_path,
                         light_path,
@@ -1641,6 +1644,11 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
                         provider,
                         api_key,
                         model,
+                    )
+                    if payload.max_iterations is not None:
+                        call_args += (payload.max_iterations,)
+                    result = await run_in_threadpool(
+                        query_router.answer_for_session, *call_args
                     )
                 except FileNotFoundError as e:
                     raise HTTPException(status_code=404, detail=_query_error_detail(e)) from e

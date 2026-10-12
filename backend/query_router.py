@@ -444,6 +444,7 @@ def answer_for_session(
     provider: str = "openrouter",
     api_key: str = "",
     model: str = "",
+    max_iterations: int = 10,
 ) -> RouterResult:
     """Answer `question` for one self-contained, per-user session.
 
@@ -477,6 +478,7 @@ def answer_for_session(
             provider=provider,
             api_key=api_key,
             model_name=model,
+            max_iterations=max_iterations,
         )
         return route_and_answer(question, rlm=rlm, provider=provider, api_key=api_key, model=model)
     finally:

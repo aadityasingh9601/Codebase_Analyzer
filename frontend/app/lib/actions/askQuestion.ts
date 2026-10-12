@@ -61,6 +61,7 @@ export type AskResult =
 export type RequestCredentials = {
   provider?: string;
   model?: string;
+  max_iterations?: number;
 };
 
 /**
@@ -108,6 +109,7 @@ export async function askQuestion(
         // is decrypted on the server for this request only. model drives the RLM.
         provider: credentials?.provider,
         model: credentials?.model,
+        max_iterations: credentials?.max_iterations,
       }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
       // The query can take minutes; do not let Next's fetch fail first.

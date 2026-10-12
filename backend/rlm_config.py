@@ -226,6 +226,7 @@ def create_rlm(
     sys_prompt: str = "distilled",
     provider: str = "openrouter",
     api_key: str = "",
+    max_iterations: int = 10,
 ) -> RLM:
     """Build an RLM bound to one repository's index.
 
@@ -278,7 +279,7 @@ def create_rlm(
         },
         logger=logger,
         max_depth=2,
-        max_iterations=10,
+        max_iterations=int(max_iterations),
         max_errors=3,
         max_timeout=240,
         max_tokens=1000000,

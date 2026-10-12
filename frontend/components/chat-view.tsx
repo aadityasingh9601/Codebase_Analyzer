@@ -69,7 +69,8 @@ const SUGGESTIONS = [
 /** How hard the backend should think before answering. */
 type Effort = "low" | "medium" | "high";
 
-/** Effort → RLM max iterations. Higher effort is slower and uses more tokens. */
+/** Effort → RLM max iterations. Higher effort is slower and uses more tokens.
+ * These values must match the backend allowlist (`rlm_config.ALLOWED_ITERATIONS`). */
 const EFFORT_MAX_ITERATIONS: Record<Effort, number> = {
   low: 8,
   medium: 13,

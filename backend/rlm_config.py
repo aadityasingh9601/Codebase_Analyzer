@@ -46,6 +46,13 @@ DEFAULT_MODEL = "inclusionai/ling-3.0-flash-sante:free"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 DEFAULT_ANTHROPIC_MODEL = "claude-3-5-haiku-latest"
 
+# Effort control for RLM. The API accepts only these caps (plus the internal
+# default) so a caller cannot request an unbounded run: `ALLOWED_ITERATIONS` is
+# the server-side allowlist the UI's low/medium/high map onto, and
+# `DEFAULT_ITERATIONS` applies when the caller omits the field entirely.
+DEFAULT_ITERATIONS = 10
+ALLOWED_ITERATIONS: frozenset[int] = frozenset({8, 10, 13, 20})
+
 PROVIDER_BACKENDS: dict[str, tuple[str, str]] = {
     "openrouter": ("openrouter", DEFAULT_MODEL),
     "openai": ("openai", DEFAULT_OPENAI_MODEL),
@@ -226,7 +233,7 @@ def create_rlm(
     sys_prompt: str = "distilled",
     provider: str = "openrouter",
     api_key: str = "",
-    max_iterations: int = 10,
+    max_iterations: int = DEFAULT_ITERATIONS,
 ) -> RLM:
     """Build an RLM bound to one repository's index.
 

@@ -7,7 +7,7 @@ from typing import Optional
 
 from rlm import RLM
 from rlm.clients import get_client
-from rlm_config import DEFAULT_MODEL, ai_api_key, resolve_provider_backend
+from rlm_config import DEFAULT_ITERATIONS, DEFAULT_MODEL, ai_api_key, resolve_provider_backend
 from session_index import (
     acquire_session,
     close_session,
@@ -444,7 +444,7 @@ def answer_for_session(
     provider: str = "openrouter",
     api_key: str = "",
     model: str = "",
-    max_iterations: int = 10,
+    max_iterations: int = DEFAULT_ITERATIONS,
 ) -> RouterResult:
     """Answer `question` for one self-contained, per-user session.
 

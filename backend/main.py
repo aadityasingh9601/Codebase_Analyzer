@@ -91,7 +91,7 @@ import jwt
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # The pipeline modules live beside this file as flat scripts. Inserting the
 # directory keeps `import fetch_github_repo` working no matter which cwd the
@@ -120,6 +120,7 @@ import query_router  # noqa: E402
 import key_vault  # noqa: E402
 import api_key_rotation  # noqa: E402
 import usage_quota  # noqa: E402
+import rlm_config  # noqa: E402
 
 log = logging.getLogger("repochat")
 
@@ -305,10 +306,21 @@ class UserQueryRequest(BaseModel):
     )
     max_iterations: int | None = Field(
         None,
-        ge=1,
-        le=50,
-        description="Cap for RLM iterations (effort control).",
+        description=(
+            "Effort control: cap for RLM iterations. Must be one of "
+            f"{sorted(rlm_config.ALLOWED_ITERATIONS)}. Omit for the default "
+            f"({rlm_config.DEFAULT_ITERATIONS})."
+        ),
     )
+
+    @field_validator("max_iterations")
+    @classmethod
+    def _validate_max_iterations(cls, value: int | None) -> int | None:
+        if value is not None and value not in rlm_config.ALLOWED_ITERATIONS:
+            raise ValueError(
+                f"max_iterations must be one of {sorted(rlm_config.ALLOWED_ITERATIONS)}"
+            )
+        return value
 
 
 class SaveApiKeyRequest(BaseModel):

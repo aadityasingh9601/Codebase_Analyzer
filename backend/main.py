@@ -119,6 +119,7 @@ from repo_storage import (  # noqa: E402
 import query_router  # noqa: E402
 import key_vault  # noqa: E402
 import api_key_rotation  # noqa: E402
+import usage_quota  # noqa: E402
 
 log = logging.getLogger("repochat")
 
@@ -138,6 +139,10 @@ MAX_CONCURRENT_QUERIES = 4
 _slots: asyncio.Semaphore | None = None
 _query_slots: asyncio.Semaphore | None = None
 _repo_locks: dict[str, asyncio.Lock] = {}
+# One in-flight query per user. Serialising a user's requests stops the free
+# tier's quota check and its token increment from racing each other (and stops
+# a user fanning out parallel free requests to stretch the daily budget).
+_user_query_locks: dict[str, asyncio.Lock] = {}
 
 
 def _index_semaphore() -> asyncio.Semaphore:
@@ -351,6 +356,15 @@ class ListApiKeysResponse(BaseModel):
     keys: list[ApiKeyInfo] = Field(default_factory=list)
 
 
+class UsageInfo(BaseModel):
+    """A free-tier user's token budget for the current day."""
+
+    used: int = Field(..., description="Tokens spent today across free queries.")
+    limit: int = Field(..., description="Daily free-tier token limit.")
+    remaining: int = Field(..., description="Tokens left today (never negative).")
+    date: str = Field(..., description="The day these numbers are for (ISO date).")
+
+
 class UserQueryResponse(BaseModel):
     answer: str = Field(..., description="Answer text, or '' when it could not be produced.")
     tier: str = Field(..., description="Which routing tier answered: DIRECT, META, or RLM.")
@@ -370,6 +384,13 @@ class UserQueryResponse(BaseModel):
     rlm_output_tokens: int = 0
     rlm_iterations: int = 0
     error: str | None = Field(None, description="Present when the query failed.")
+    usage: UsageInfo | None = Field(
+        None,
+        description=(
+            "Free-tier token budget after this query. Present only when the "
+            "query ran on the free tier (no provider supplied)."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -764,6 +785,17 @@ def _decrypt_key_row(row: dict, user_id: str, provider: str) -> str:
                 "remove it on /keys and add it again."
             ),
         ) from e
+
+
+def _usage_info(used: int) -> UsageInfo:
+    """Wrap a used-token count in the response shape the UI expects."""
+    limit = usage_quota.FREE_TOKENS_PER_DAY
+    return UsageInfo(
+        used=used,
+        limit=limit,
+        remaining=max(0, limit - used),
+        date=usage_quota.today_iso(),
+    )
 
 
 def _list_user_repos(user_id: str) -> list[dict]:
@@ -1485,6 +1517,19 @@ def delete_key(key_id: str, authorization: str = Header(default="")) -> Response
     return Response(status_code=204)
 
 
+@app.get("/api/usage", response_model=UsageInfo)
+def get_usage(authorization: str = Header(default="")) -> UsageInfo:
+    """The caller's free-tier token budget for today (for the chat UI meter).
+
+    Requires a real signed-in user: the free tier is tied to an account so it
+    cannot be reset by clearing storage, and there is no anonymous quota.
+    """
+    user_id = verify_bearer_token(authorization)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Sign in to see your free-tier usage.")
+    return _usage_info(usage_quota.get_used_tokens(user_id, _db()))
+
+
 @app.post("/api/userquery", response_model=UserQueryResponse)
 async def userquery(payload: UserQueryRequest, authorization: str = Header(default="")) -> UserQueryResponse:
     """Answer a question about one of the caller's own repositories.
@@ -1504,26 +1549,43 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
         is tried automatically; when none remain -> 400 "all keys exhausted".
     """
     user_id = verify_bearer_token(authorization)
-    print(payload)
+    # print(payload)  # avoid noisy logs in prod-like runs
 
     question = payload.question.strip()
     if not question:
         raise HTTPException(status_code=422, detail="question must not be empty")
 
-    # BYOK (Phase 2): pick the best available stored key for the requested
-    # provider (api_key_rotation), re-derive the caller's per-user key
-    # server-side and decrypt that key's blob in memory — for this request
-    # only. No key travels in the request body. Omitting the provider means
-    # "use the server's default model credential." The chosen model (optional)
-    # is passed through to the RLM for this request.
-    provider = (payload.provider or "openrouter").strip().lower()
+    # Determine mode: if client explicitly requests a BYOK provider, this is
+    # "Your Key" mode and must NOT fall back to free tier. Otherwise it is
+    # "Free" mode and must use the free tier (OpenRouter) with quota tracking.
+    mode_byok = payload.provider is not None
+
     api_key = ""
     used_key_row = None
-    if payload.provider:
+    free_tier = not mode_byok
+
+    if mode_byok:
+        provider = (payload.provider or "").strip().lower()
         _require_provider(provider)
         used_key_row = _select_provider_key(user_id or "", provider)
         api_key = _decrypt_key_row(used_key_row, user_id or "", provider)
-    model = (payload.model or "").strip()
+        model = (payload.model or "").strip()
+    else:
+        # Free tier: always use OpenRouter with the server's credential.
+        if not user_id:
+            raise HTTPException(
+                status_code=401,
+                detail="Sign in to use the free tier.",
+            )
+        provider = usage_quota.FREE_TIER_PROVIDER
+        api_key = ""
+        model = (payload.model or "").strip()
+        # Rough pre-check to avoid starting requests that are almost certainly
+        # over quota.
+        if not usage_quota.check_token_quota(
+            user_id, usage_quota.FREE_ESTIMATE_TOKENS, _db()
+        ):
+            raise HTTPException(status_code=402, detail=usage_quota.QUOTA_EXHAUSTED_MESSAGE)
 
     row = _user_repo_target(user_id, payload.repo_name or "")
     repo_name = row["repo_name"]
@@ -1538,18 +1600,30 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
     light_path = os.path.join(workdir, "codebase_lightweight.json")
     started = time.monotonic()
 
+    result = None
+    # Per-user lock: the free tier's pre-check and post-query increment must not
+    # race with another in-flight request for the same user. BYOK doesn't spend
+    # the free budget, but re-using the same lock keeps the rule general.
+    if not user_id:
+        # Development fallback without auth: share one global lock to avoid
+        # creating unbounded keys; quota is not tracked for anonymous.
+        uq_lock = _repo_locks.setdefault(f"anon_query:{repo_name}", asyncio.Lock())
+    else:
+        uq_lock = _user_query_locks.setdefault(user_id, asyncio.Lock())
+
     try:
-        async with _query_semaphore():
-            try:
-                await run_in_threadpool(
-                    _download_index, user_id, owner, repo, sha, full_path, light_path
-                )
-            except Exception as e:
-                log.exception("[query] download failed for %s@%s", repo_name, sha[:12])
-                raise HTTPException(
-                    status_code=502,
-                    detail="Could not retrieve your repository index. Reconnect it from /get-started.",
-                ) from e
+        async with uq_lock:
+            async with _query_semaphore():
+                try:
+                    await run_in_threadpool(
+                        _download_index, user_id, owner, repo, sha, full_path, light_path
+                    )
+                except Exception as e:
+                    log.exception("[query] download failed for %s@%s", repo_name, sha[:12])
+                    raise HTTPException(
+                        status_code=502,
+                        detail="Could not retrieve your repository index. Reconnect it from /get-started.",
+                    ) from e
 
             # Answer, re-routing across the caller's keys if the current one is
             # rate-limited. Each failed key is parked (marked exhausted) before
@@ -1596,6 +1670,27 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
     if used_key_row is not None and not error:
         api_key_rotation.update_key_last_used(used_key_row["id"], _db())
 
+    # Add actual tokens to the free-tier budget only if the request ran on the
+    # free tier (no BYOK key was used). BYOK consumption is the user's own cost.
+    usage_info = None
+    if free_tier and user_id:
+        tokens = (
+            (result.direct_input_tokens or 0)
+            + (result.direct_output_tokens or 0)
+            + (result.rlm_input_tokens or 0)
+            + (result.rlm_output_tokens or 0)
+        )
+        # If there was an error, we may still have spent provider tokens in a
+        # failed attempt? The router records what it measured; don't double-count
+        # when nothing was spent, and don't subtract for errors. Record what the
+        # request actually consumed.
+        if error is None:
+            # Some gauge paths can run 0 actual tokens before escalating — still
+            # record what we have. But we only add when positive.
+            pass
+        usage_quota.add_tokens_used(user_id, tokens, _db())
+        usage_info = _usage_info(usage_quota.get_used_tokens(user_id, _db()))
+
     return UserQueryResponse(
         answer=result.answer or "",
         tier=result.tier,
@@ -1612,6 +1707,7 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
         rlm_output_tokens=result.rlm_output_tokens,
         rlm_iterations=result.rlm_iterations,
         error=error,
+        usage=usage_info,
     )
 
 

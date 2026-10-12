@@ -33,9 +33,13 @@ ai_api_key: str = os.getenv("AI_API_KEY")
 # "cohere/north-mini-code:free" -> Good responses, can be used.
 # "google/gemma-4-26b-a4b-it:free" -> Good but gets rate-limited very quickly.
 # "nvidia/nemotron-3-super-120b-a12b:free" -> Good, doesn't outputs in code blocks also can mess up with big code files, Rank 3-4.
-# "openrouter/free" -> Very slow & showt respones.
+# "openrouter/free" -> Very slow & short respones.
+# "google/gemini-2.5-flash"
+# "meta-llama/llama-3.1-70b-instruct"
+# "deepseek/deepseek-r1"
+# The last 3 modles written above are not :free on openrouter, but have their own free tier so you can use them too in your app.
 
-DEFAULT_MODEL = "cohere/north-mini-code:free"
+DEFAULT_MODEL = "inclusionai/ling-3.0-flash-sante:free"
 
 # BYOK defaults per provider, used only when a caller provides that provider's
 # own API key. The free env-fallback model above stays the OpenRouter default.

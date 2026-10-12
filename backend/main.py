@@ -121,6 +121,7 @@ import key_vault  # noqa: E402
 import api_key_rotation  # noqa: E402
 import usage_quota  # noqa: E402
 import rlm_config  # noqa: E402
+import env_key_rotation  # noqa: E402
 
 log = logging.getLogger("repochat")
 
@@ -1581,6 +1582,10 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
     api_key = ""
     used_key_row = None
     free_tier = not mode_byok
+    # Free-tier key rotation state: how many server keys we may still try for
+    # this request (0 for BYOK, which rotates its own keys instead).
+    free_key_attempts = 0
+    free_key_total = 0
 
     if mode_byok:
         provider = (payload.provider or "").strip().lower()
@@ -1589,14 +1594,17 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
         api_key = _decrypt_key_row(used_key_row, user_id or "", provider)
         model = (payload.model or "").strip()
     else:
-        # Free tier: always use OpenRouter with the server's credential.
+        # Free tier: always use OpenRouter with the server's credential. A pool
+        # of env keys is rotated on rate limit so one exhausted key doesn't take
+        # the free tier down.
         if not user_id:
             raise HTTPException(
                 status_code=401,
                 detail="Sign in to use the free tier.",
             )
         provider = usage_quota.FREE_TIER_PROVIDER
-        api_key = ""
+        api_key = env_key_rotation.current_key()
+        free_key_total = len(env_key_rotation.available_keys())
         model = (payload.model or "").strip()
         # Rough pre-check to avoid starting requests that are almost certainly
 
@@ -1670,16 +1678,27 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
                     log.exception("[query] %s@%s failed", repo_name, sha[:12])
                     raise HTTPException(status_code=502, detail=_query_error_detail(e)) from e
 
-                if used_key_row is None or not _suggests_rate_limit(result.error or ""):
+                if not _suggests_rate_limit(result.error or ""):
                     break
 
-                log.info(
-                    "[query] key %s rate-limited; rotating to the next key",
-                    used_key_row["id"],
-                )
-                api_key_rotation.mark_key_exhausted(used_key_row["id"], _db())
-                used_key_row = _select_provider_key(user_id or "", provider)
-                api_key = _decrypt_key_row(used_key_row, user_id or "", provider)
+                if used_key_row is not None:
+                    # BYOK: park the rate-limited key and pick the next one.
+                    log.info(
+                        "[query] key %s rate-limited; rotating to the next key",
+                        used_key_row["id"],
+                    )
+                    api_key_rotation.mark_key_exhausted(used_key_row["id"], _db())
+                    used_key_row = _select_provider_key(user_id or "", provider)
+                    api_key = _decrypt_key_row(used_key_row, user_id or "", provider)
+                    continue
+
+                # Free tier: rotate through the server's env keys, bounded by the
+                # number configured so a fully-exhausted pool still terminates.
+                free_key_attempts += 1
+                if free_key_attempts >= free_key_total or not env_key_rotation.rotate():
+                    break
+                api_key = env_key_rotation.current_key()
+                log.info("[query] free-tier key rate-limited; rotating server key")
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 

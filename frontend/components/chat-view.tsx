@@ -123,7 +123,7 @@ export function ChatView() {
   // per the UI spec; changing the provider resets the model to its first one.
   const [provider, setProvider] = useState<ProviderId>("openrouter");
   const [model, setModel] = useState<string>(() => firstModel("openrouter"));
-  const [effort, setEffort] = useState<Effort>("medium");
+  const [effort, setEffort] = useState<Effort>("low");
 
   useEffect(() => {
     if (chatMode !== "free" || !repo) return;
@@ -625,7 +625,7 @@ const MessageBubble = memo(function MessageBubble({
                <p className="mt-3 rounded-lg border border-border-base bg-surface-subtle px-3 py-2 text-[12.5px] leading-relaxed text-muted">
                  {message.content ? "Note: " : ""}
                  {message.error}
-                 {/(No API key saved|exhausted|free tier exhausted|Add your own key)/i.test(message.error) ? (
+                 {/(No API key saved|exhausted|free tier exhausted|Add your own)/i.test(message.error) ? (
                    <Link href="/keys" className="ml-1 font-medium text-accent hover:underline">
                      Add a key
                    </Link>

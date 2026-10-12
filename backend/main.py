@@ -1606,7 +1606,9 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
         api_key = env_key_rotation.current_key()
         free_key_total = len(env_key_rotation.available_keys())
         model = (payload.model or "").strip()
-        # Rough pre-check to avoid starting requests that are almost certainly
+        # The rough quota pre-check runs inside the per-user lock below, so two
+        # concurrent requests for the same user cannot both pass it right as the
+        # budget runs out.
 
     row = _user_repo_target(user_id, payload.repo_name or "")
     repo_name = row["repo_name"]
@@ -1634,6 +1636,16 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
 
     try:
         async with uq_lock:
+            # Free tier: refuse to start attempts that would almost certainly
+            # blow today's budget. Rough on purpose — the exact cost is only
+            # known after the model runs, and the real total is recorded below.
+            if free_tier and user_id and not usage_quota.check_token_quota(
+                user_id, usage_quota.FREE_ESTIMATE_TOKENS, _db()
+            ):
+                raise HTTPException(
+                    status_code=402,
+                    detail=usage_quota.QUOTA_EXHAUSTED_MESSAGE,
+                )
             async with _query_semaphore():
                 try:
                     await run_in_threadpool(

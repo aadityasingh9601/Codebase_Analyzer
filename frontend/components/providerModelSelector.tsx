@@ -24,22 +24,25 @@ export function ProviderModelSelector({
   value,
   onChange,
   disabled = false,
+  lockedProvider,
 }: {
   value: ProviderModelSelection;
   onChange: (selection: ProviderModelSelection) => void;
   disabled?: boolean;
+  lockedProvider?: ProviderId;
 }) {
+  const provider = lockedProvider ?? value.provider;
   function handleProviderChange(next: string) {
-    const provider = next as ProviderId;
-    onChange({ provider, model: firstModel(provider) });
+    const p = next as ProviderId;
+    onChange({ provider: p, model: firstModel(p) });
   }
 
   return (
     <div className="flex flex-wrap items-center gap-2">
       <select
-        value={value.provider}
+        value={provider}
         onChange={(e) => handleProviderChange(e.target.value)}
-        disabled={disabled}
+        disabled={disabled || !!lockedProvider}
         aria-label="Model provider"
         className={selectClass}
       >
@@ -52,12 +55,12 @@ export function ProviderModelSelector({
 
       <select
         value={value.model}
-        onChange={(e) => onChange({ ...value, model: e.target.value })}
+        onChange={(e) => onChange({ provider, model: e.target.value })}
         disabled={disabled}
         aria-label="Model"
         className={selectClass}
       >
-        {PROVIDER_MODELS[value.provider].map((m) => (
+        {PROVIDER_MODELS[provider].map((m) => (
           <option key={m.id} value={m.id}>
             {m.name}
           </option>

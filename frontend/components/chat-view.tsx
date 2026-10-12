@@ -10,8 +10,10 @@ import { CopyIcon, CheckIcon, SpinnerIcon, FileIcon, ReloadIcon, KeyIcon } from 
 import { Button } from "@/components/ui/button";
 import { useSelectedRepo } from "@/hooks/use-selected-repo";
 import { useActiveProvider } from "@/hooks/use-active-provider";
+import { useChatMode } from "@/hooks/use-chat-mode";
 import { clearSelectedRepo, writeSelectedRepo, type SelectedRepo } from "@/lib/repo";
 import { setActiveProvider, type ProviderId } from "@/lib/api-key-store";
+import { setChatMode } from "@/lib/chat-mode-store";
 import {
   ProviderModelSelector,
   firstModel,
@@ -23,6 +25,7 @@ import {
   fetchMessages,
   saveMessage,
 } from "@/app/lib/actions/messages";
+import { getUsage } from "@/app/lib/actions/usage";
 
 // Markdown rendering (react-markdown + remark-gfm + highlight.js) is by far
 // the heaviest dependency on the chat screen. Loading it into its own async
@@ -94,16 +97,35 @@ export function ChatView() {
   const pathname = usePathname();
   const repo = useSelectedRepo();
   const activeProvider = useActiveProvider();
+  const chatMode = useChatMode();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [responding, setResponding] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState("");
+  const [usage, setUsage] = useState<{ used: number; limit: number } | null>(null);
 
   // Provider + model for the next question. Default provider is OpenRouter,
   // per the UI spec; changing the provider resets the model to its first one.
   const [provider, setProvider] = useState<ProviderId>("openrouter");
   const [model, setModel] = useState<string>(() => firstModel("openrouter"));
+
+  useEffect(() => {
+    if (chatMode === "free") {
+      setProvider("openrouter");
+      setModel(firstModel("openrouter"));
+    }
+  }, [chatMode]);
+
+  useEffect(() => {
+    if (chatMode !== "free" || !repo) return;
+    let cancelled = false;
+    getUsage().then((r) => {
+      if (cancelled) return;
+      if (r.ok) setUsage({ used: r.usage.used, limit: r.usage.limit });
+    });
+    return () => { cancelled = true; };
+  }, [chatMode, repo, responding]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -258,7 +280,7 @@ export function ChatView() {
         // The composer's provider + model drive this request. The backend
         // decrypts the caller's stored key for the selected provider and builds
         // the RLM around the chosen model.
-        { provider, model },
+        chatMode === "free" ? { model } : { provider, model },
       );
 
       setMessages((prev) =>
@@ -285,7 +307,7 @@ export function ChatView() {
       // but a database hiccup must never disturb the chat itself.
       void persistConversation(repo, content, result);
     },
-    [repo, responding, provider, model],
+    [repo, responding, provider, model, chatMode],
   );
 
   // Retry a past question from its message bubble — identical to typing the
@@ -421,12 +443,36 @@ export function ChatView() {
               }}
               className="mx-auto w-full max-w-[820px] px-5 py-4"
             >
-              <div className="mb-2 flex flex-wrap items-center gap-2 px-1">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1">
                 <ProviderModelSelector
                   value={{ provider, model }}
                   onChange={handleSelectionChange}
                   disabled={responding || !repo}
+                  lockedProvider={chatMode === "free" ? provider : undefined}
                 />
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-1.5 rounded-xl border border-border-base bg-surface px-2.5 py-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setChatMode("free")}
+                      className={`rounded-lg px-2 py-0.5 text-[12px] ${chatMode === "free" ? "bg-accent text-accent-foreground" : "text-muted hover:text-foreground"}`}
+                    >
+                      Free
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setChatMode("byok")}
+                      className={`rounded-lg px-2 py-0.5 text-[12px] ${chatMode === "byok" ? "bg-accent text-accent-foreground" : "text-muted hover:text-foreground"}`}
+                    >
+                      Your API key
+                    </button>
+                  </div>
+                  {chatMode === "free" && usage ? (
+                    <div className="rounded-xl border border-border-base bg-surface px-2.5 py-1.5 text-[12px] text-muted">
+                      {Math.round(usage.used / 1000)}K/{Math.round(usage.limit / 1000)}K used
+                    </div>
+                  ) : null}
+                </div>
               </div>
               <div className="flex items-end gap-2.5 rounded-2xl border border-border-base bg-surface p-2 shadow-[0_1px_2px_rgba(0,0,0,0.04)] focus-within:border-accent focus-within:ring-4 focus-within:ring-accent/12">
                 <textarea
@@ -545,15 +591,15 @@ const MessageBubble = memo(function MessageBubble({
         )}
 
         {message.error ? (
-          <p className="mt-3 rounded-lg border border-border-base bg-surface-subtle px-3 py-2 text-[12.5px] leading-relaxed text-muted">
-            {message.content ? "Note: " : ""}
-            {message.error}
-            {/No API key saved|exhausted/.test(message.error) ? (
-              <Link href="/keys" className="ml-1 font-medium text-accent hover:underline">
-                Add a key
-              </Link>
-            ) : null}
-          </p>
+               <p className="mt-3 rounded-lg border border-border-base bg-surface-subtle px-3 py-2 text-[12.5px] leading-relaxed text-muted">
+                 {message.content ? "Note: " : ""}
+                 {message.error}
+                 {/(No API key saved|exhausted|free tier exhausted|Add your own key)/i.test(message.error) ? (
+                   <Link href="/keys" className="ml-1 font-medium text-accent hover:underline">
+                     Add a key
+                   </Link>
+                 ) : null}
+               </p>
         ) : null}
 
         {message.sources?.length ? (

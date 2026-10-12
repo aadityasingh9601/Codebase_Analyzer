@@ -6,10 +6,9 @@ import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { RepoSidebar } from "@/components/repo-sidebar";
-import { CopyIcon, CheckIcon, SpinnerIcon, FileIcon, ReloadIcon, KeyIcon } from "@/components/icons";
+import { CopyIcon, CheckIcon, SpinnerIcon, FileIcon, ReloadIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { useSelectedRepo } from "@/hooks/use-selected-repo";
-import { useActiveProvider } from "@/hooks/use-active-provider";
 import { useChatMode } from "@/hooks/use-chat-mode";
 import { clearSelectedRepo, writeSelectedRepo, type SelectedRepo } from "@/lib/repo";
 import { setActiveProvider, type ProviderId } from "@/lib/api-key-store";
@@ -94,15 +93,13 @@ async function persistConversation(
   if (!repo.id) return;
 
   try {
-    const res = await saveMessage(repo.id, "user", question);
-    console.log("response", res);
+    await saveMessage(repo.id, "user", question);
   } catch {
     return;
   }
 
   if (result.ok && result.query.answer) {
-    const res = await saveMessage(repo.id, "assistant", result.query.answer, result.query.evidencePaths);
-    console.log(res);
+    await saveMessage(repo.id, "assistant", result.query.answer, result.query.evidencePaths);
   }
 }
 
@@ -110,7 +107,6 @@ export function ChatView() {
   const router = useRouter();
   const pathname = usePathname();
   const repo = useSelectedRepo();
-  const activeProvider = useActiveProvider();
   const chatMode = useChatMode();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -194,27 +190,21 @@ export function ChatView() {
   // Load the selected repo's saved conversation. The pathname is the trigger:
   // each time the page becomes `/chat` (initial mount, or a return from /keys,
   // /upload-repo, the sidebar, …) the history is re-fetched, and switching
-  // repos re-fetches too. A ref tracks the last repo loaded so re-selecting the
-  // SAME repo doesn't refetch, but it is invalidated whenever the page leaves
-  // /chat — so coming back always loads, even with the identical repo selected.
+  // repos re-fetches too. Deps are stable values (`repo.id`, `isChatPage`), not
+  // the repo object itself: depending on object identity re-runs this effect
+  // mid-fetch, which cancels the in-flight load and drops the resolved history.
   const isChatPage = pathname === "/chat";
-  const lastLoadedRepo = useRef("");
   useEffect(() => {
-    if (!isChatPage) {
-      lastLoadedRepo.current = "";
-      return;
-    }
     const id = repo?.id;
-    if (!id || id === lastLoadedRepo.current) return;
-    lastLoadedRepo.current = id;
+    if (!isChatPage || !id) return;
 
     const seq = conversationSeq.current;
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- spinner must be visible before the async fetch resolves
     setHistoryLoading(true);
     setHistoryError("");
 
     fetchMessages(id).then((result) => {
-      console.log("Result ->", result);
       if (cancelled || seq !== conversationSeq.current) return;
       setHistoryLoading(false);
 
@@ -223,27 +213,20 @@ export function ChatView() {
         setMessages([]);
         return;
       }
-      console.log(result.messages.length > 0);
-      if (result.messages.length > 0) {
-        console.log("check 1");
-        setMessages(
-          result.messages.map((m) => ({
-            id: m.id,
-            role: m.role,
-            content: m.content,
-            sources: m.sources.length > 0 ? m.sources : undefined,
-          })),
-        );
-        console.log("check 2");
-      } else {
-        setMessages([]);
-      }
+      setMessages(
+        result.messages.map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          sources: m.sources.length > 0 ? m.sources : undefined,
+        })),
+      );
     });
 
     return () => {
       cancelled = true;
     };
-  }, [repo, isChatPage]);
+  }, [repo?.id, isChatPage]);
 
   // Pin to the newest message. Smooth scrolling would fight the streaming
   // updates, so jump instantly while a reply is coming in.
@@ -387,22 +370,6 @@ export function ChatView() {
                   </a>
                 </div>
               )}
-
-              {repo && !activeProvider ? (
-                <div className="mb-5 flex items-center justify-between gap-3 rounded-xl border border-border-base bg-surface-subtle px-4 py-3">
-                  <p className="flex items-center gap-2 text-[12.5px] leading-relaxed text-muted">
-                    <KeyIcon className="h-4 w-4 shrink-0" />
-                    Questions are answered with a provider key you save on /keys.
-                    Add yours to pick the model in the composer below.
-                  </p>
-                  <Link
-                    href="/keys"
-                    className="shrink-0 rounded-lg bg-accent px-3 py-1.5 text-[13px] font-medium text-accent-foreground transition-[filter] hover:brightness-110"
-                  >
-                    Add key
-                  </Link>
-                </div>
-              ) : null}
 
               {repo?.id && historyLoading ? (
                 <p className="mb-5 flex items-center gap-1.5 text-[12.5px] text-muted">

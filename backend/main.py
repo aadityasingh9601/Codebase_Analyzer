@@ -1742,6 +1742,19 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
                     break
                 api_key = env_key_rotation.current_key()
                 log.info("[query] free-tier key rate-limited; rotating server key")
+
+            # Record this request's tokens while still holding the per-user lock
+            # so the read-modify-write in add_tokens_used cannot race with
+            # another in-flight request from the same user. BYOK consumption is
+            # the user's own cost and is not metered here.
+            if free_tier and user_id:
+                tokens = (
+                    (result.direct_input_tokens or 0)
+                    + (result.direct_output_tokens or 0)
+                    + (result.rlm_input_tokens or 0)
+                    + (result.rlm_output_tokens or 0)
+                )
+                usage_quota.add_tokens_used(user_id, tokens, _db())
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
@@ -1752,25 +1765,10 @@ async def userquery(payload: UserQueryRequest, authorization: str = Header(defau
     if used_key_row is not None and not error:
         api_key_rotation.update_key_last_used(used_key_row["id"], _db())
 
-    # Add actual tokens to the free-tier budget only if the request ran on the
-    # free tier (no BYOK key was used). BYOK consumption is the user's own cost.
+    # Free-tier usage was recorded above, under the per-user lock; read the
+    # fresh total for the response. BYOK consumption is the user's own cost.
     usage_info = None
     if free_tier and user_id:
-        tokens = (
-            (result.direct_input_tokens or 0)
-            + (result.direct_output_tokens or 0)
-            + (result.rlm_input_tokens or 0)
-            + (result.rlm_output_tokens or 0)
-        )
-        # If there was an error, we may still have spent provider tokens in a
-        # failed attempt? The router records what it measured; don't double-count
-        # when nothing was spent, and don't subtract for errors. Record what the
-        # request actually consumed.
-        if error is None:
-            # Some gauge paths can run 0 actual tokens before escalating — still
-            # record what we have. But we only add when positive.
-            pass
-        usage_quota.add_tokens_used(user_id, tokens, _db())
         usage_info = _usage_info(usage_quota.get_used_tokens(user_id, _db()))
 
     return UserQueryResponse(

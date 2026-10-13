@@ -8,17 +8,23 @@ tokens, summed across the cheap direct/gauge calls and the RLM, are added to a
 per-user, per-day row after the answer is produced. A rough pre-check runs
 before the query, because the exact cost is unknowable until the model runs.
 
-`increment_tokens` (see supabase_user_usage.sql) does the addition inside the
-database as a single atomic statement, so two concurrent requests can never
-lose an update. The route additionally serialises a single user's requests, so
-the pre-check and the increment cannot interleave for the same user.
+The addition is done by the `increment_tokens` SQL function (see
+supabase_user_usage.sql) as a single INSERT ... ON CONFLICT DO UPDATE, so
+parallel requests can never clobber each other's totals and the quota cannot be
+bypassed by firing many requests at once. That function is granted to the
+service role only, so a signed-in user cannot call it (or the table) to tamper
+with their own counter. The route also holds a per-user lock, which serialises
+a single user's requests within a process.
 
 The limit is read from `FREE_TOKENS_PER_DAY` so it can be raised without a code
 change. Resets are free: a new day is simply a new `(user_id, date)` row.
 """
 
+import logging
 import os
 from datetime import date
+
+log = logging.getLogger(__name__)
 
 # How many tokens a free-tier user may spend per calendar day. Conservative on
 # purpose — a first launch can afford to be stingy and then relax the cap.
@@ -60,7 +66,8 @@ def get_used_tokens(user_id: str, supabase) -> int:
             if not rows:
                 return 0
             return int(rows[0].get("tokens_used") or 0)
-    except Exception:
+    except Exception as e:
+        log.warning("Could not read free-tier usage for %s: %s", user_id, e)
         return 0
     return 0
 
@@ -81,8 +88,11 @@ def check_token_quota(user_id: str, tokens_needed_estimate: int, supabase) -> bo
 def add_tokens_used(user_id: str, tokens: int, supabase) -> None:
     """Add the actual token count to today's row, atomically.
 
-    Uses the `increment_tokens` SQL function (a single INSERT ... ON CONFLICT
-    DO UPDATE), so parallel requests cannot clobber each other's totals. A
+    Calls the `increment_tokens` SQL function (a single INSERT ... ON CONFLICT
+    DO UPDATE), so parallel requests cannot clobber each other's totals — the
+    quota cannot be bypassed by firing many requests simultaneously. That
+    function is executable by the service role only (see supabase_user_usage.sql),
+    so a signed-in user cannot call it to tamper with their own counter. A
     non-positive count is a no-op.
     """
     if tokens <= 0:
@@ -93,5 +103,10 @@ def add_tokens_used(user_id: str, tokens: int, supabase) -> None:
                 "increment_tokens",
                 {"p_user_id": user_id, "p_date": today_iso(), "p_tokens": int(tokens)},
             ).execute()
-    except Exception:
-        pass
+        else:
+            log.warning("No rpc() on Supabase client; usage not recorded for %s", user_id)
+    except Exception as e:
+        # Never break the answer, but never fail silently either: a missing,
+        # mis-granted or renamed function is exactly how "0 tokens used" hides
+        # an unenforced quota.
+        log.warning("Could not record %s free-tier tokens for %s: %s", tokens, user_id, e)

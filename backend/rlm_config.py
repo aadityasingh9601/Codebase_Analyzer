@@ -34,6 +34,7 @@ ai_api_key: str = os.getenv("AI_API_KEY")
 # "google/gemma-4-26b-a4b-it:free" -> Good but gets rate-limited very quickly.
 # "nvidia/nemotron-3-super-120b-a12b:free" -> Good, doesn't outputs in code blocks also can mess up with big code files, Rank 3-4.
 # "openrouter/free" -> Very slow & short respones.
+# "inclusionai/ling-3.1-flash" -> Fast & good respones.
 # "google/gemini-2.5-flash"
 # "meta-llama/llama-3.1-70b-instruct"
 # "deepseek/deepseek-r1"

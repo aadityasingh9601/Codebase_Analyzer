@@ -30,7 +30,7 @@ export const PROVIDER_MODELS = {
       description: "Fast, free tier",
     },
    {
-      id: "inclusionai/ling-3.0-flash-sante:free",
+      id: "inclusionai/ling-3.0-flash",
       name: "Ling 3.0 Flash",
       description: "Strong reasoning",
     },
@@ -40,13 +40,8 @@ export const PROVIDER_MODELS = {
       description: "Fast, free tier",
     },
     {
-      id: "apodex/apodex-1.1-mini:free",
-      name: "Apodex 1.1 Mini",
-      description: "Strong reasoning",
-    },
-    {
-      id: "meta-llama/llama-3.1-70b-instruct",
-      name: "Llama 3.1 70B",
+      id: "dots-studio/dots-3-note-preview:free",
+      name: "Dots3-Note",
       description: "Open source",
     },
     {

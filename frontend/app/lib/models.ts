@@ -25,11 +25,6 @@ export const PROVIDER_MODELS = {
   ],
   openrouter: [
     {
-      id: "apodex/apodex-1.1-mini:free",
-      name: "Apodex 1.1 Mini",
-      description: "Strong reasoning",
-    },
-    {
       id: "cohere/north-mini-code:free",
       name: "North Mini Code",
       description: "Fast, free tier",
@@ -43,6 +38,11 @@ export const PROVIDER_MODELS = {
       id: "google/gemini-2.5-flash",
       name: "Gemini 2.5 Flash",
       description: "Fast, free tier",
+    },
+    {
+      id: "apodex/apodex-1.1-mini:free",
+      name: "Apodex 1.1 Mini",
+      description: "Strong reasoning",
     },
     {
       id: "meta-llama/llama-3.1-70b-instruct",
